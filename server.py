@@ -14,10 +14,11 @@ LOG_SOURCES = {
     "codex":  Path.home() / ".codex/log/codex-tui.log",
 }
 
+# Match only foreground terminal sessions, not subprocesses/background daemons
 PROCESS_PATTERNS = {
-    "hermes": "hermes-agent",
-    "claude": "claude",
-    "codex":  "codex-tui",
+    "hermes": "venv/bin/hermes",
+    "claude": "opt/homebrew/bin/claude",
+    "codex":  "local/bin/codex",
 }
 
 agent_states = {
@@ -29,11 +30,22 @@ agent_states = {
 clients: set = set()
 
 
-def count_instances(pattern: str) -> int:
+def count_instances(cmd_pattern: str) -> int:
+    """Count only foreground terminal sessions (tty s00X), not background daemons."""
     try:
-        r = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True)
-        pids = [p.strip() for p in r.stdout.strip().split("\n") if p.strip()]
-        return max(1, len(pids))
+        result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+        count = 0
+        for line in result.stdout.splitlines():
+            if cmd_pattern not in line:
+                continue
+            parts = line.split()
+            if len(parts) < 7:
+                continue
+            tty = parts[6]  # TTY column
+            # Only count sessions attached to a terminal (s000, s001, etc.)
+            if tty.startswith("s"):
+                count += 1
+        return max(1, count)
     except Exception:
         return 1
 
@@ -104,7 +116,7 @@ async def poll_instances():
                 changed = True
         if changed:
             await broadcast()
-        await asyncio.sleep(3)
+        await asyncio.sleep(4)
 
 
 async def decay_status():
