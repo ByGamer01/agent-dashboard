@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 LOG_SOURCES = {
@@ -159,6 +160,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/vendor", StaticFiles(directory=Path(__file__).parent / "vendor"), name="vendor")
 
 
 @app.websocket("/ws")
