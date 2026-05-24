@@ -489,6 +489,12 @@ addEventListener('resize',()=>{
   renderer.setSize(innerWidth,innerHeight);
   labelRenderer.setSize(innerWidth,innerHeight);
 });
+addEventListener('wheel',e=>{
+  if(selectedRoom)return;
+  e.preventDefault();
+  camRadius=Math.max(5,Math.min(30,camRadius+e.deltaY*.01));
+  setOverview();
+},{passive:false});
 
 function animate(){
   const dt=Math.min(.04,clock.getDelta());

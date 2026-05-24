@@ -37,12 +37,12 @@ shutdown_event = asyncio.Event()
 
 
 def count_instances(cmd_pattern: str) -> int:
-    """Count only foreground terminal sessions, not background daemons.
-    Cross-platform: checks whether the TTY column in `ps aux` is not '?'.
-    On Linux TTY is 'pts/N', on macOS 's00X'; background daemons show '?' on both."""
+    """Count unique terminal sessions running the given process.
+    Counts each unique TTY once, so multiple processes spawned by the
+    same session (e.g. hermes's python + node + gateway) count as 1."""
     try:
         result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
-        count = 0
+        ttys = set()
         for line in result.stdout.splitlines():
             if cmd_pattern not in line:
                 continue
@@ -50,10 +50,9 @@ def count_instances(cmd_pattern: str) -> int:
             if len(parts) < 7:
                 continue
             tty = parts[6]  # TTY column
-            # Only count sessions attached to a terminal (not '?' or '??')
-            if tty and tty[0] != "?":
-                count += 1
-        return count
+            if tty and tty[0] != "?":  # attached to a terminal
+                ttys.add(tty)
+        return len(ttys)
     except Exception:
         return 0
 
