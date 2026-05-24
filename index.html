@@ -4,441 +4,610 @@
 <meta charset="UTF-8">
 <title>Agent Control Room</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#060610; overflow:hidden; }
-  canvas { display:block; }
-  #hud {
-    position:fixed; top:16px; left:50%; transform:translateX(-50%);
-    font-family:'Courier New',monospace; font-size:0.65rem;
-    color:#333; letter-spacing:0.3em; text-transform:uppercase;
-    pointer-events:none;
-  }
-  #hud span { color:#1a1a3a; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#020208;overflow:hidden;font-family:'Courier New',monospace}
+  canvas{display:block}
+  #hud{position:fixed;top:14px;left:50%;transform:translateX(-50%);
+    font-size:.6rem;color:#1a1a40;letter-spacing:.4em;pointer-events:none}
+  #hud b{color:#2a2a6a}
 </style>
 </head>
 <body>
-<div id="hud">⬡ AGENT CONTROL ROOM <span>// LIVE</span></div>
+<div id="hud">⬡ AGENT CONTROL ROOM <b>// LIVE</b></div>
 <canvas id="c"></canvas>
-
 <script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-let W = canvas.width  = window.innerWidth;
-let H = canvas.height = window.innerHeight;
-window.addEventListener('resize', () => {
-  W = canvas.width  = window.innerWidth;
-  H = canvas.height = window.innerHeight;
-});
+// ─── Canvas setup ────────────────────────────────────────────────────────────
+const cv = document.getElementById('c');
+const cx = cv.getContext('2d');
+let W = cv.width  = innerWidth;
+let H = cv.height = innerHeight;
+addEventListener('resize', () => { W = cv.width = innerWidth; H = cv.height = innerHeight; });
 
-// ── Palette ──────────────────────────────────────────────────
-const AGENTS_CFG = {
-  hermes: { name:'Hermes',      color:'#00ff88', glow:'rgba(0,255,136,', idx:0 },
-  claude: { name:'Claude Code', color:'#ff6b35', glow:'rgba(255,107,53,', idx:1 },
-  codex:  { name:'Codex',       color:'#a78bfa', glow:'rgba(167,139,250,', idx:2 },
-};
+// ─── Room constants ───────────────────────────────────────────────────────────
+const VP  = () => ({ x: W * 0.5, y: H * 0.27 });
+const FT  = () => H * 0.30;   // floor top (back)
+const FB  = () => H * 0.91;   // floor bottom (front)
+const WL  = () => W * 0.04;   // wall left edge (bottom)
+const WR  = () => W * 0.96;   // wall right edge (bottom)
 
-// ── Particle pool ─────────────────────────────────────────────
-class Particle {
-  constructor(x,y,color) {
-    this.x = x; this.y = y;
-    this.vx = (Math.random()-0.5)*3;
-    this.vy = (Math.random()-0.5)*3 - 1.5;
-    this.life = 1;
-    this.decay = 0.02 + Math.random()*0.03;
-    this.r = 2 + Math.random()*3;
-    this.color = color;
+function worldToScreen(wx, wz) {
+  // wx: -1..1 (left-right), wz: 0..1 (back-front)
+  const vp = VP(), ft = FT(), fb = FB();
+  const sy = ft + (fb - ft) * wz;
+  const halfW = (WR() - WL()) * 0.5 * (0.14 + 0.86 * wz);
+  const sx = vp.x + wx * halfW;
+  const sc = 0.38 + 0.62 * wz;
+  return { x: sx, y: sy, scale: sc };
+}
+
+// ─── Room drawing ─────────────────────────────────────────────────────────────
+function drawRoom() {
+  const vp = VP(), ft = FT(), fb = FB();
+  const wl = WL(), wr = WR();
+
+  // Ceiling
+  const cg = cx.createLinearGradient(0,0,0,ft);
+  cg.addColorStop(0,'#020208'); cg.addColorStop(1,'#060618');
+  cx.fillStyle = cg; cx.fillRect(0,0,W,ft);
+
+  // Ceiling lights (strips converging to VP)
+  for (let i = -3; i <= 3; i++) {
+    const xBot = vp.x + i * W * 0.14;
+    const grad = cx.createLinearGradient(vp.x, ft-40, xBot, 0);
+    grad.addColorStop(0,'rgba(80,80,220,0.18)');
+    grad.addColorStop(1,'rgba(80,80,220,0)');
+    cx.strokeStyle = grad; cx.lineWidth = i===0?2:1;
+    cx.beginPath(); cx.moveTo(vp.x, ft); cx.lineTo(xBot,0); cx.stroke();
   }
-  update() { this.x+=this.vx; this.y+=this.vy; this.vy+=0.05; this.life-=this.decay; }
-  draw() {
-    ctx.globalAlpha = this.life * 0.8;
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, Math.max(0, this.r*this.life), 0, Math.PI*2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+
+  // Back wall
+  const bwg = cx.createLinearGradient(0,ft-90,0,ft+10);
+  bwg.addColorStop(0,'#04040e'); bwg.addColorStop(1,'#08081e');
+  cx.fillStyle = bwg; cx.fillRect(0,ft-90,W,100);
+
+  // Back wall — glowing base strip
+  const bsg = cx.createLinearGradient(0,ft-4,0,ft+4);
+  bsg.addColorStop(0,'rgba(60,60,200,0.5)'); bsg.addColorStop(1,'transparent');
+  cx.fillStyle = bsg; cx.fillRect(0,ft-2,W,6);
+
+  // Back wall windows
+  drawWindows(ft);
+
+  // Left wall
+  cx.fillStyle = '#030310';
+  cx.beginPath(); cx.moveTo(0,0); cx.lineTo(vp.x*0.04, ft); cx.lineTo(wl, fb); cx.lineTo(0,H); cx.closePath(); cx.fill();
+  // Left wall edge line
+  cx.strokeStyle='rgba(40,40,140,0.4)'; cx.lineWidth=1.5;
+  cx.beginPath(); cx.moveTo(vp.x*0.04, ft); cx.lineTo(wl, fb); cx.stroke();
+
+  // Right wall
+  cx.fillStyle = '#030310';
+  cx.beginPath(); cx.moveTo(W,0); cx.lineTo(W-vp.x*0.04, ft); cx.lineTo(wr, fb); cx.lineTo(W,H); cx.closePath(); cx.fill();
+  cx.strokeStyle='rgba(40,40,140,0.4)'; cx.lineWidth=1.5;
+  cx.beginPath(); cx.moveTo(W-vp.x*0.04, ft); cx.lineTo(wr, fb); cx.stroke();
+
+  // Floor
+  drawFloor(vp, ft, fb, wl, wr);
+}
+
+function drawWindows(ft) {
+  const wins = 5;
+  const t = Date.now() * 0.001;
+  for (let i = 0; i < wins; i++) {
+    const x = W * (0.1 + i * 0.2);
+    const y = ft - 70;
+    const ww = W * 0.12, wh = 52;
+    // window frame
+    cx.strokeStyle = 'rgba(50,50,160,0.5)'; cx.lineWidth = 1.5;
+    cx.strokeRect(x - ww/2, y, ww, wh);
+    // window inner glow
+    const wg = cx.createLinearGradient(x-ww/2, y, x-ww/2, y+wh);
+    wg.addColorStop(0, `rgba(10,10,40,0.9)`);
+    wg.addColorStop(0.5,`rgba(15,15,60,0.8)`);
+    wg.addColorStop(1, `rgba(10,10,40,0.9)`);
+    cx.fillStyle = wg; cx.fillRect(x-ww/2, y, ww, wh);
+    // scrolling code lines inside window
+    cx.save(); cx.beginPath(); cx.rect(x-ww/2+2, y+2, ww-4, wh-4); cx.clip();
+    cx.font = '7px Courier New'; cx.fillStyle = 'rgba(80,200,120,0.6)';
+    const lines = ['SELECT *','FROM agents','WHERE status','= "working"','GROUP BY id','LIMIT 10;','// sync()','await task','return data'];
+    for (let l = 0; l < 7; l++) {
+      const ly = ((y + l*9 - t*20*((i%3)+1)*0.5) % wh + wh) % wh + y;
+      cx.fillText(lines[(i*3+l) % lines.length], x-ww/2+4, ly);
+    }
+    cx.restore();
+    // reflection line
+    cx.strokeStyle=`rgba(60,80,200,${0.2+0.1*Math.sin(t+i)})`; cx.lineWidth=1;
+    cx.beginPath(); cx.moveTo(x-ww/2,y); cx.lineTo(x-ww/2,y+wh); cx.stroke();
   }
 }
 
-let particles = [];
+function drawFloor(vp, ft, fb, wl, wr) {
+  // Floor base
+  const fg = cx.createLinearGradient(0,ft,0,H);
+  fg.addColorStop(0,'#05051a'); fg.addColorStop(0.6,'#080820'); fg.addColorStop(1,'#0a0a22');
+  cx.fillStyle = fg;
+  cx.beginPath(); cx.moveTo(0,ft); cx.lineTo(W,ft); cx.lineTo(W,H); cx.lineTo(0,H); cx.fill();
 
-// ── Robot entity ──────────────────────────────────────────────
+  // Reflection gradient near front
+  const rg = cx.createLinearGradient(0,fb,0,H);
+  rg.addColorStop(0,'rgba(30,30,100,0.08)'); rg.addColorStop(1,'rgba(30,30,100,0)');
+  cx.fillStyle=rg; cx.fillRect(0,fb,W,H-fb);
+
+  // Converging vertical lines
+  const nv = 16;
+  for (let i = 0; i <= nv; i++) {
+    const t2 = i/nv;
+    const xBot = wl + (wr-wl)*t2;
+    const edgeFade = 1 - Math.abs(t2-0.5)*2;
+    cx.strokeStyle = `rgba(35,35,110,${0.05+0.12*edgeFade})`;
+    cx.lineWidth = 0.6;
+    cx.beginPath(); cx.moveTo(vp.x, ft); cx.lineTo(xBot, fb); cx.stroke();
+  }
+
+  // Horizontal perspective lines
+  const nh = 14;
+  for (let i = 1; i <= nh; i++) {
+    const t2 = (i/nh); const t2sq = t2*t2;
+    const y = ft + (fb-ft)*t2sq;
+    const hw = (wr-wl)*0.5*t2sq;
+    const alpha = 0.05 + 0.18*t2;
+    cx.strokeStyle = `rgba(35,35,110,${alpha})`;
+    cx.lineWidth = 0.5 + t2;
+    cx.beginPath(); cx.moveTo(vp.x-hw, y); cx.lineTo(vp.x+hw, y); cx.stroke();
+  }
+
+  // Floor glow dots at grid intersections (near VP)
+  for (let row=1; row<=4; row++) {
+    const t2 = (row/nh); const t2sq=t2*t2;
+    const y = ft+(fb-ft)*t2sq;
+    const hw = (wr-wl)*0.5*t2sq;
+    for (let col=1; col<=nv; col++) {
+      const t3=col/nv;
+      const x = vp.x-hw + hw*2*t3;
+      if (Math.random()<0.003) {
+        cx.fillStyle=`rgba(60,60,200,${0.4*t2sq})`;
+        cx.beginPath(); cx.arc(x,y,1,0,Math.PI*2); cx.fill();
+      }
+    }
+  }
+}
+
+// ─── Particles ────────────────────────────────────────────────────────────────
+class Particle {
+  constructor(x,y,color) {
+    this.x=x; this.y=y;
+    this.vx=(Math.random()-.5)*2.5;
+    this.vy=(Math.random()-.5)*2-2;
+    this.life=1; this.decay=0.018+Math.random()*0.025;
+    this.r=1.5+Math.random()*2.5; this.color=color;
+  }
+  update(){ this.x+=this.vx; this.y+=this.vy; this.vy+=0.04; this.life-=this.decay; }
+  draw(){
+    const r = Math.max(0, this.r*this.life);
+    cx.globalAlpha=this.life*0.75;
+    cx.fillStyle=this.color;
+    cx.beginPath(); cx.arc(this.x,this.y,r,0,Math.PI*2); cx.fill();
+    cx.globalAlpha=1;
+  }
+}
+let particles=[];
+
+// ─── Robot ────────────────────────────────────────────────────────────────────
+const CONFIGS = {
+  hermes: { name:'Hermes',      color:'#00ff88', glow:'rgba(0,255,136,',   shade:'#00cc70' },
+  claude: { name:'Claude Code', color:'#ff6b35', glow:'rgba(255,107,53,',  shade:'#cc5528' },
+  codex:  { name:'Codex',       color:'#a78bfa', glow:'rgba(167,139,250,', shade:'#8b6fd4' },
+};
+
 class Robot {
-  constructor(id, cfg, startX, startY) {
-    this.id     = id;
-    this.name   = cfg.name;
+  constructor(uid, agentId, instanceIdx) {
+    this.uid = uid;
+    this.agentId = agentId;
+    this.idx = instanceIdx;
+    const cfg = CONFIGS[agentId];
+    this.name   = cfg.name + (instanceIdx > 0 ? ` #${instanceIdx+1}` : '');
     this.color  = cfg.color;
+    this.shade  = cfg.shade;
     this.glow   = cfg.glow;
-    this.x      = startX;
-    this.y      = startY;
-    this.vx     = (Math.random()-0.5)*1.2;
-    this.vy     = (Math.random()-0.5)*1.2;
-    this.status = 'idle';
-    this.lastLine = '';
-    this.angle  = 0;         // body sway
-    this.eyeT   = 0;         // eye look direction
-    this.bubbleT = 0;        // speech bubble timer
-    this.scale  = 1;
-    this.targetX = startX;
-    this.targetY = startY;
+    // World position: wx in [-0.85,0.85], wz in [0.05,0.95]
+    this.wx = (Math.random()-.5)*1.5;
+    this.wz = 0.2 + Math.random()*0.7;
+    this.vwx = (Math.random()-.5)*0.006;
+    this.vwz = (Math.random()-.5)*0.006;
+    this.twx = this.wx;
+    this.twz = this.wz;
     this.wanderT = 0;
-    this.R = 40;             // robot half-size
+    this.status   = 'idle';
+    this.lastLine = '';
+    this.bubbleT  = 0;
+    this.bubbleText = '';
+    this.angle = 0;
+    this.eyeT  = 0;
+    this.scale = 1; // body scale modifier
+    this.chestPulse = Math.random()*Math.PI*2;
+    this.dying = false;
   }
 
   setStatus(status, line) {
-    if (status !== this.status) {
-      this.status = status;
-      if (status === 'working') { this.scale = 1.15; }
-    }
+    this.status = status;
     if (line && line !== this.lastLine) {
       this.lastLine = line;
-      this.bubbleT = 220;
+      this.bubbleText = line;
+      this.bubbleT = 260;
     }
   }
 
-  get speed() {
-    if (this.status==='working')  return 2.2;
-    if (this.status==='thinking') return 0.9;
-    return 0.4;
+  get worldSpeed() {
+    if (this.status==='working')  return 0.014;
+    if (this.status==='thinking') return 0.006;
+    return 0.003;
   }
 
   wander(others) {
     this.wanderT--;
     if (this.wanderT <= 0) {
-      this.wanderT = 80 + Math.random()*120;
+      this.wanderT = 90 + Math.random()*140;
       if (this.status==='working') {
-        // approach a random other active robot
-        const active = others.filter(r => r!==this && r.status!=='offline');
-        if (active.length) {
-          const t = active[Math.floor(Math.random()*active.length)];
-          const angle = Math.atan2(t.y-this.y, t.x-this.x) + (Math.random()-0.5)*0.6;
-          const dist = 120 + Math.random()*80;
-          this.targetX = t.x - Math.cos(angle)*dist;
-          this.targetY = t.y - Math.sin(angle)*dist;
+        const peers = others.filter(r => r!==this && r.agentId!==this.agentId && r.status!=='offline');
+        if (peers.length) {
+          const p = peers[Math.floor(Math.random()*peers.length)];
+          const ang = Math.atan2(p.wz-this.wz, p.wx-this.wx) + (Math.random()-.5)*0.8;
+          const dist = 0.25 + Math.random()*0.2;
+          this.twx = p.wx - Math.cos(ang)*dist;
+          this.twz = p.wz - Math.sin(ang)*dist;
+        } else {
+          this.twx = (Math.random()-.5)*1.5;
+          this.twz = 0.15 + Math.random()*0.75;
         }
       } else {
-        this.targetX = 80 + Math.random()*(W-160);
-        this.targetY = 80 + Math.random()*(H-160);
+        this.twx = (Math.random()-.5)*1.5;
+        this.twz = 0.1 + Math.random()*0.8;
       }
+      this.twx = Math.max(-0.88, Math.min(0.88, this.twx));
+      this.twz = Math.max(0.05, Math.min(0.95, this.twz));
     }
 
-    const dx = this.targetX - this.x;
-    const dy = this.targetY - this.y;
-    const d  = Math.sqrt(dx*dx+dy*dy)+0.01;
-    const spd = this.speed;
-    this.vx += (dx/d)*spd*0.08;
-    this.vy += (dy/d)*spd*0.08;
-    this.vx *= 0.92;
-    this.vy *= 0.92;
+    const dx = this.twx - this.wx, dz = this.twz - this.wz;
+    const d = Math.sqrt(dx*dx+dz*dz) + 0.001;
+    const spd = this.worldSpeed;
+    this.vwx += (dx/d)*spd*0.1;
+    this.vwz += (dz/d)*spd*0.1;
+    this.vwx *= 0.90;
+    this.vwz *= 0.90;
+    this.wx += this.vwx;
+    this.wz += this.vwz;
+    this.wx = Math.max(-0.9, Math.min(0.9, this.wx));
+    this.wz = Math.max(0.04, Math.min(0.97, this.wz));
 
-    // wall bounce
-    const pad = this.R+10;
-    if (this.x < pad)   { this.vx += 0.5; this.targetX = W/2; }
-    if (this.x > W-pad) { this.vx -= 0.5; this.targetX = W/2; }
-    if (this.y < pad+40){ this.vy += 0.5; this.targetY = H/2; }
-    if (this.y > H-pad) { this.vy -= 0.5; this.targetY = H/2; }
-
-    this.x += this.vx;
-    this.y += this.vy;
-
-    // sway & eye
-    this.angle = Math.sin(Date.now()*0.002)*0.06 * (this.status==='working'?2.5:1);
-    this.eyeT += 0.03;
-    this.scale += (1 - this.scale)*0.08;
+    this.angle = Math.sin(Date.now()*0.0015)*0.05 * (this.status==='working'?2.5:1);
+    this.eyeT += 0.025;
+    this.chestPulse += this.status==='working' ? 0.12 : 0.03;
+    const targetScale = this.status==='working' ? 1.1 : 1.0;
+    this.scale += (targetScale - this.scale)*0.06;
   }
 
-  emitParticles() {
-    if (this.status==='working' && Math.random()<0.4) {
+  emitParticles(sx, sy, sc) {
+    const rate = this.status==='working' ? 0.45 : this.status==='thinking' ? 0.12 : 0;
+    if (Math.random() < rate) {
       particles.push(new Particle(
-        this.x + (Math.random()-0.5)*30,
-        this.y - this.R*this.scale + 5,
-        this.color
-      ));
-    }
-    if (this.status==='thinking' && Math.random()<0.12) {
-      particles.push(new Particle(
-        this.x + (Math.random()-0.5)*20,
-        this.y - this.R*this.scale,
+        sx + (Math.random()-.5)*28*sc,
+        sy - 42*sc*this.scale,
         this.color
       ));
     }
   }
 
-  drawGlow() {
-    const r = this.R * this.scale;
-    const intensity = this.status==='working' ? 0.35 : this.status==='thinking' ? 0.15 : 0.04;
-    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r*2.5);
-    grad.addColorStop(0, this.glow + intensity + ')');
-    grad.addColorStop(1, this.glow + '0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, r*2.5, 0, Math.PI*2);
-    ctx.fill();
-  }
+  draw() {
+    const {x:sx, y:sy, scale:sc} = worldToScreen(this.wx, this.wz);
+    const S = sc * this.scale;
+    const dim = this.status==='idle' ? 0.42 : 1;
 
-  drawBody() {
-    const s = this.scale;
-    const x = this.x, y = this.y;
-    const c = this.color;
-    const dim = this.status==='idle' ? 0.45 : this.status==='offline' ? 0.15 : 1;
+    this.emitParticles(sx, sy, sc);
 
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(this.angle);
-    ctx.globalAlpha = dim;
+    // glow
+    const gi = this.status==='working' ? 0.3 : this.status==='thinking' ? 0.12 : 0.03;
+    const gr = cx.createRadialGradient(sx,sy,0,sx,sy,70*S);
+    gr.addColorStop(0, this.glow+(gi*1.2)+')');
+    gr.addColorStop(1, this.glow+'0)');
+    cx.fillStyle=gr;
+    cx.beginPath(); cx.arc(sx,sy,70*S,0,Math.PI*2); cx.fill();
 
-    // shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath();
-    ctx.ellipse(0, 36*s, 24*s, 6*s, 0, 0, Math.PI*2);
-    ctx.fill();
+    // floor shadow
+    cx.globalAlpha=dim*0.25;
+    cx.fillStyle='rgba(0,0,0,0.6)';
+    cx.beginPath(); cx.ellipse(sx,sy+36*S, 20*S,5*S,0,0,Math.PI*2); cx.fill();
+    cx.globalAlpha=1;
+
+    cx.save();
+    cx.translate(sx, sy);
+    cx.rotate(this.angle);
+    cx.globalAlpha=dim;
+
+    const c=this.color, sh=this.shade;
 
     // legs
-    for (let i of [-1,1]) {
-      ctx.fillStyle = '#0d0d1a';
-      roundRect(-8*s+i*10*s, 26*s, 10*s, 16*s, 4*s);
-      ctx.strokeStyle = c; ctx.lineWidth = 1.5*s;
-      roundRect(-8*s+i*10*s, 26*s, 10*s, 16*s, 4*s, true);
+    for (const i of [-1,1]) {
+      cx.fillStyle='#080818';
+      rr(-7*S+i*9*S, 25*S, 9*S, 15*S, 4*S);
+      cx.strokeStyle=c; cx.lineWidth=1.5*S;
+      rr(-7*S+i*9*S, 25*S, 9*S, 15*S, 4*S, true);
     }
-
     // arms
-    for (let i of [-1,1]) {
-      ctx.fillStyle = '#0d0d1a';
-      roundRect(i*22*s-5*s, -8*s, 8*s, 20*s, 4*s);
-      ctx.strokeStyle = c; ctx.lineWidth = 1.5*s;
-      roundRect(i*22*s-5*s, -8*s, 8*s, 20*s, 4*s, true);
+    for (const i of [-1,1]) {
+      cx.fillStyle='#080818';
+      rr(i*21*S-5*S, -8*S, 8*S, 22*S, 4*S);
+      cx.strokeStyle=c; cx.lineWidth=1.5*S;
+      rr(i*21*S-5*S, -8*S, 8*S, 22*S, 4*S, true);
+      // hand
+      cx.fillStyle=sh;
+      cx.beginPath(); cx.arc(i*21*S-1*S, 15*S, 4*S, 0, Math.PI*2); cx.fill();
     }
-
     // body
-    ctx.fillStyle = '#0d0d1a';
-    roundRect(-18*s, -10*s, 36*s, 38*s, 8*s);
-    ctx.strokeStyle = c; ctx.lineWidth = 2*s;
-    roundRect(-18*s, -10*s, 36*s, 38*s, 8*s, true);
+    cx.fillStyle='#080818';
+    rr(-17*S,-10*S,34*S,37*S,8*S);
+    cx.strokeStyle=c; cx.lineWidth=2*S;
+    rr(-17*S,-10*S,34*S,37*S,8*S, true);
 
-    // chest light
-    const pulse = 0.5 + 0.5*Math.sin(Date.now()*0.005*(this.status==='working'?4:1));
-    const lg = ctx.createRadialGradient(0,8*s,0, 0,8*s,10*s);
-    lg.addColorStop(0, c);
-    lg.addColorStop(1, 'transparent');
-    ctx.fillStyle = lg;
-    ctx.globalAlpha = dim * (0.4 + 0.6*pulse);
-    ctx.beginPath(); ctx.arc(0, 8*s, 10*s, 0, Math.PI*2); ctx.fill();
-    ctx.globalAlpha = dim;
-    ctx.fillStyle = c;
-    ctx.beginPath(); ctx.arc(0, 8*s, 4*s, 0, Math.PI*2); ctx.fill();
-
-    // side buttons
-    for (let i of [-1,1]) {
-      ctx.globalAlpha = dim * (0.3 + 0.7*Math.random()*0.3);
-      ctx.fillStyle = c;
-      roundRect(i*10*s, 20*s, 5*s, 3*s, 1.5*s);
+    // chest panel
+    cx.fillStyle='#0d0d25';
+    rr(-10*S,-2*S,20*S,18*S,4*S);
+    // chest core
+    const pulse=0.5+0.5*Math.sin(this.chestPulse);
+    const cg2=cx.createRadialGradient(0,7*S,0,0,7*S,9*S);
+    cg2.addColorStop(0,c); cg2.addColorStop(1,'transparent');
+    cx.fillStyle=cg2; cx.globalAlpha=dim*(0.3+0.7*pulse);
+    cx.beginPath(); cx.arc(0,7*S,9*S,0,Math.PI*2); cx.fill();
+    cx.globalAlpha=dim;
+    cx.fillStyle=c;
+    cx.beginPath(); cx.arc(0,7*S,3.5*S,0,Math.PI*2); cx.fill();
+    // side indicators
+    for (const i of [-1,1]) {
+      cx.globalAlpha=dim*(0.4+0.5*Math.random()*0.4);
+      cx.fillStyle=c; rr(i*10*S,20*S,4*S,3*S,1.5*S);
     }
-    ctx.globalAlpha = dim;
+    cx.globalAlpha=dim;
 
     // head
-    ctx.fillStyle = '#0d0d1a';
-    roundRect(-16*s, -38*s, 32*s, 30*s, 8*s);
-    ctx.strokeStyle = c; ctx.lineWidth = 2*s;
-    roundRect(-16*s, -38*s, 32*s, 30*s, 8*s, true);
+    cx.fillStyle='#080818';
+    rr(-15*S,-38*S,30*S,29*S,8*S);
+    cx.strokeStyle=c; cx.lineWidth=2*S;
+    rr(-15*S,-38*S,30*S,29*S,8*S, true);
 
     // antenna
-    ctx.strokeStyle = c; ctx.lineWidth = 2*s;
-    ctx.beginPath(); ctx.moveTo(0,-38*s); ctx.lineTo(0,-48*s); ctx.stroke();
-    ctx.fillStyle = c;
-    ctx.beginPath(); ctx.arc(0,-50*s, 4*s, 0, Math.PI*2); ctx.fill();
+    cx.strokeStyle=c; cx.lineWidth=2*S;
+    cx.beginPath(); cx.moveTo(0,-38*S); cx.lineTo(0,-50*S); cx.stroke();
+    const antPulse=0.5+0.5*Math.sin(Date.now()*0.008*(this.status==='working'?4:1));
+    cx.fillStyle=c; cx.globalAlpha=dim*(0.5+0.5*antPulse);
+    cx.beginPath(); cx.arc(0,-52*S,4*S,0,Math.PI*2); cx.fill();
+    cx.globalAlpha=dim;
 
     // eyes
-    const eyeOff = Math.sin(this.eyeT)*3*s;
-    for (let i of [-1,1]) {
-      const ex = i*8*s, ey = -26*s;
-      ctx.fillStyle = c; ctx.globalAlpha = dim*0.15;
-      ctx.beginPath(); ctx.arc(ex, ey, 7*s, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = dim;
-      ctx.fillStyle = c;
-      ctx.beginPath(); ctx.arc(ex+eyeOff*0.3, ey, 4*s, 0, Math.PI*2); ctx.fill();
-      // glint
-      ctx.fillStyle = 'white'; ctx.globalAlpha = dim*0.7;
-      ctx.beginPath(); ctx.arc(ex+eyeOff*0.3+1.5*s, ey-1.5*s, 1.5*s, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = dim;
+    const eLook=Math.sin(this.eyeT)*2.5*S;
+    for (const i of [-1,1]) {
+      const ex=i*8*S, ey=-26*S;
+      cx.fillStyle=c; cx.globalAlpha=dim*0.12;
+      cx.beginPath(); cx.arc(ex,ey,7*S,0,Math.PI*2); cx.fill();
+      cx.globalAlpha=dim;
+      cx.fillStyle=c;
+      cx.beginPath(); cx.arc(ex+eLook*0.4,ey,3.8*S,0,Math.PI*2); cx.fill();
+      cx.fillStyle='white'; cx.globalAlpha=dim*0.7;
+      cx.beginPath(); cx.arc(ex+eLook*0.4+1.2*S,ey-1.2*S,1.3*S,0,Math.PI*2); cx.fill();
+      cx.globalAlpha=dim;
     }
-
-    // mouth — changes with status
+    // mouth
     if (this.status==='working') {
-      // big smile
-      ctx.strokeStyle = c; ctx.lineWidth = 2*s; ctx.globalAlpha = dim;
-      ctx.beginPath();
-      ctx.arc(0, -16*s, 8*s, 0.2, Math.PI-0.2);
-      ctx.stroke();
+      cx.strokeStyle=c; cx.lineWidth=1.8*S;
+      cx.beginPath(); cx.arc(0,-16*S,7*S,0.25,Math.PI-0.25); cx.stroke();
     } else if (this.status==='thinking') {
-      // small line
-      ctx.fillStyle = c; ctx.globalAlpha = dim*0.6;
-      roundRect(-5*s, -13*s, 10*s, 2*s, 1*s);
+      cx.fillStyle=c; cx.globalAlpha=dim*0.5;
+      rr(-3*S,-13*S,6*S,2*S,1*S);
     } else {
-      // neutral
-      ctx.fillStyle = c; ctx.globalAlpha = dim*0.4;
-      roundRect(-8*s, -13*s, 16*s, 2*s, 1*s);
+      cx.fillStyle=c; cx.globalAlpha=dim*0.35;
+      rr(-7*S,-13*S,14*S,2*S,1*S);
     }
+    cx.globalAlpha=1;
+    cx.restore();
 
-    ctx.globalAlpha = 1;
-    ctx.restore();
+    // name + badge
+    const nameAlpha = this.status==='idle'?0.3:0.8;
+    cx.globalAlpha=nameAlpha;
+    cx.font=`bold ${Math.round(10*S)}px Courier New`;
+    cx.fillStyle=c; cx.textAlign='center';
+    cx.fillText(this.name.toUpperCase(), sx, sy+50*S);
+    cx.font=`${Math.round(8*S)}px Courier New`;
+    cx.fillText(this.status.toUpperCase(), sx, sy+62*S);
+    cx.globalAlpha=1;
 
-    // name label
-    ctx.globalAlpha = 0.6;
-    ctx.font = `bold ${11*s}px Courier New`;
-    ctx.fillStyle = c;
-    ctx.textAlign = 'center';
-    ctx.fillText(this.name.toUpperCase(), x, y + 50*s);
-
-    // status badge
-    ctx.font = `${9*s}px Courier New`;
-    ctx.fillStyle = c;
-    ctx.globalAlpha = this.status==='idle' ? 0.3 : 0.9;
-    ctx.fillText(this.status.toUpperCase(), x, y + 63*s);
-    ctx.globalAlpha = 1;
+    // speech bubble
+    this.drawBubble(sx, sy, S, sc);
   }
 
-  drawBubble() {
-    if (this.bubbleT <= 0 || !this.lastLine) return;
-    const alpha = Math.min(1, this.bubbleT/30) * Math.min(1, this.bubbleT/220*3);
-    const text = this.lastLine.slice(0,50) + (this.lastLine.length>50?'…':'');
-    const s = this.scale;
-    const bx = this.x + 28*s;
-    const by = this.y - 55*s;
-    const pad = 8, lh = 14;
-    const lines = wrapText(text, 160);
-    const bw = 170, bh = lines.length*lh + pad*2;
+  drawBubble(sx, sy, S, sc) {
+    if (this.bubbleT<=0 || !this.bubbleText) return;
+    const fade = Math.min(1, this.bubbleT/40) * Math.min(1, (this.bubbleT/260)*4);
+    const text = this.bubbleText;
+    const maxW = Math.min(220, W*0.22);
 
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = '#0d0d1a';
-    ctx.strokeStyle = this.color;
-    ctx.lineWidth = 1.5;
-    roundRect(bx, by-bh, bw, bh, 6);
-    ctx.fillStyle = '#0d0d1a'; roundRect(bx, by-bh, bw, bh, 6);
-    ctx.strokeStyle = this.color; roundRect(bx, by-bh, bw, bh, 6, true);
+    cx.font = '9px Courier New';
+    const wrapped = wrapText(text, maxW - 20);
+    const lh = 13, pad = 10;
+    const bw = maxW, bh = wrapped.length * lh + pad * 2 + 16;
+
+    // Position: prefer top-right, flip if near edge
+    let bx = sx + 18*S;
+    let by = sy - 48*S - bh;
+    if (bx + bw > W - 10) bx = sx - bw - 18*S;
+    if (by < 10) by = sy + 10;
+
+    cx.globalAlpha = fade;
+    // shadow
+    cx.shadowColor = this.color;
+    cx.shadowBlur = 12;
+    cx.fillStyle = '#0a0a1e';
+    roundRectPath(bx, by, bw, bh, 8);
+    cx.fill();
+    cx.shadowBlur = 0;
+    // border
+    cx.strokeStyle = this.color;
+    cx.lineWidth = 1.5;
+    roundRectPath(bx, by, bw, bh, 8);
+    cx.stroke();
+
+    // header bar
+    cx.fillStyle = this.color;
+    cx.globalAlpha = fade * 0.15;
+    roundRectPath(bx, by, bw, 18, 8);
+    cx.fill();
+    cx.globalAlpha = fade;
+
+    // header text
+    cx.fillStyle = this.color;
+    cx.font = 'bold 7px Courier New';
+    cx.textAlign = 'left';
+    cx.fillText(`● ${this.name.toUpperCase()} — ${this.status.toUpperCase()}`, bx+8, by+12);
+
+    // divider
+    cx.strokeStyle = this.color;
+    cx.lineWidth = 0.5;
+    cx.globalAlpha = fade * 0.4;
+    cx.beginPath(); cx.moveTo(bx+6, by+18); cx.lineTo(bx+bw-6, by+18); cx.stroke();
+    cx.globalAlpha = fade;
+
+    // body text
+    cx.fillStyle = '#a0a0c0';
+    cx.font = '9px Courier New';
+    wrapped.forEach((line, i) => {
+      cx.fillText(line, bx+pad, by+18+pad+lh*(i+0.85));
+    });
 
     // tail
-    ctx.beginPath();
-    ctx.moveTo(bx, by-4); ctx.lineTo(bx-10, by+4); ctx.lineTo(bx+8, by-4);
-    ctx.fillStyle = '#0d0d1a'; ctx.fill();
-    ctx.strokeStyle = this.color; ctx.stroke();
+    const tx = bx < sx ? bx+bw : bx;
+    const ty = by+bh;
+    cx.fillStyle = '#0a0a1e';
+    cx.strokeStyle = this.color;
+    cx.lineWidth = 1.5;
+    cx.beginPath();
+    if (bx < sx) {
+      cx.moveTo(tx, ty-6); cx.lineTo(tx+12, ty+8); cx.lineTo(tx-4, ty-6);
+    } else {
+      cx.moveTo(tx, ty-6); cx.lineTo(tx-12, ty+8); cx.lineTo(tx+4, ty-6);
+    }
+    cx.closePath(); cx.fill(); cx.stroke();
 
-    ctx.fillStyle = this.color;
-    ctx.font = '9px Courier New';
-    ctx.textAlign = 'left';
-    lines.forEach((l,i) => ctx.fillText(l, bx+pad, by-bh+pad+lh*(i+0.8)));
-    ctx.globalAlpha = 1;
+    cx.globalAlpha = 1;
+    cx.textAlign = 'center';
     this.bubbleT--;
   }
 }
 
-function roundRect(x,y,w,h,r, stroke=false) {
-  ctx.beginPath();
-  ctx.moveTo(x+r,y);
-  ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
-  ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
-  ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
-  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
-  ctx.closePath();
-  if (stroke) ctx.stroke(); else ctx.fill();
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function rr(x,y,w,h,r,stroke=false) {
+  cx.beginPath();
+  cx.moveTo(x+r,y); cx.lineTo(x+w-r,y); cx.arcTo(x+w,y,x+w,y+r,r);
+  cx.lineTo(x+w,y+h-r); cx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  cx.lineTo(x+r,y+h); cx.arcTo(x,y+h,x,y+h-r,r);
+  cx.lineTo(x,y+r); cx.arcTo(x,y,x+r,y,r);
+  cx.closePath();
+  if (stroke) cx.stroke(); else cx.fill();
 }
+function roundRectPath(x,y,w,h,r){ rr(x,y,w,h,r); }
 
 function wrapText(text, maxW) {
   const words = text.split(' ');
   const lines = []; let cur = '';
   for (const w of words) {
     const test = cur ? cur+' '+w : w;
-    if (ctx.measureText(test).width > maxW) { lines.push(cur); cur=w; }
-    else cur = test;
+    if (cx.measureText(test).width > maxW) { if(cur)lines.push(cur); cur=w; }
+    else cur=test;
   }
   if (cur) lines.push(cur);
-  return lines;
+  return lines.slice(0,4);
 }
 
-// ── Draw connection beams between working robots ───────────────
-function drawConnections(robots) {
-  const active = robots.filter(r => r.status==='working');
-  for (let i=0; i<active.length; i++) {
-    for (let j=i+1; j<active.length; j++) {
+// ─── Connection beams ─────────────────────────────────────────────────────────
+function drawBeams(bots) {
+  const active = bots.filter(r=>r.status==='working');
+  const t = Date.now()*0.002;
+  for (let i=0;i<active.length;i++) {
+    for (let j=i+1;j<active.length;j++) {
       const a=active[i], b=active[j];
-      const t = Date.now()*0.003;
-      const midX = (a.x+b.x)/2 + Math.sin(t)*20;
-      const midY = (a.y+b.y)/2 + Math.cos(t)*20;
-      const grad = ctx.createLinearGradient(a.x,a.y,b.x,b.y);
-      grad.addColorStop(0, a.color);
-      grad.addColorStop(1, b.color);
-      ctx.strokeStyle = grad;
-      ctx.lineWidth = 1.5;
-      ctx.globalAlpha = 0.25 + 0.15*Math.sin(t*3);
-      ctx.beginPath();
-      ctx.moveTo(a.x,a.y);
-      ctx.quadraticCurveTo(midX,midY,b.x,b.y);
-      ctx.stroke();
-      // moving dot along beam
-      const p = (Math.sin(t)+1)/2;
-      const bx = bezier(a.x,midX,b.x,p);
-      const by2 = bezier(a.y,midY,b.y,p);
-      ctx.globalAlpha = 0.8;
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(bx,by2,2.5,0,Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 1;
+      const as=worldToScreen(a.wx,a.wz), bs=worldToScreen(b.wx,b.wz);
+      const mx=(as.x+bs.x)/2+Math.sin(t+i)*25, my=(as.y+bs.y)/2+Math.cos(t+j)*25;
+      const g=cx.createLinearGradient(as.x,as.y,bs.x,bs.y);
+      g.addColorStop(0,a.color); g.addColorStop(1,b.color);
+      cx.strokeStyle=g; cx.lineWidth=1.5;
+      cx.globalAlpha=0.2+0.12*Math.sin(t*2.5);
+      cx.beginPath(); cx.moveTo(as.x,as.y); cx.quadraticCurveTo(mx,my,bs.x,bs.y); cx.stroke();
+      // moving dot
+      const p=(Math.sin(t+i*1.3)+1)/2;
+      const dx=bezier(as.x,mx,bs.x,p), dy=bezier(as.y,my,bs.y,p);
+      cx.globalAlpha=0.85; cx.fillStyle='#fff';
+      cx.beginPath(); cx.arc(dx,dy,2.5,0,Math.PI*2); cx.fill();
+      cx.globalAlpha=1;
     }
   }
-  ctx.globalAlpha = 1;
+  cx.globalAlpha=1;
 }
 
-function bezier(a,b,c,t) {
-  return (1-t)*(1-t)*a + 2*(1-t)*t*b + t*t*c;
-}
+function bezier(a,b,c,t){ return (1-t)*(1-t)*a+2*(1-t)*t*b+t*t*c; }
 
-// ── Grid background ────────────────────────────────────────────
-function drawGrid() {
-  ctx.strokeStyle = 'rgba(30,30,80,0.4)';
-  ctx.lineWidth = 0.5;
-  const step = 60;
-  for (let x=0;x<W;x+=step) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-  for (let y=0;y<H;y+=step) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-}
+// ─── Robot pool ───────────────────────────────────────────────────────────────
+const robotPool = new Map(); // uid → Robot
 
-// ── Init robots ────────────────────────────────────────────────
-const robots = [
-  new Robot('hermes', AGENTS_CFG.hermes, W*0.25, H*0.5),
-  new Robot('claude', AGENTS_CFG.claude, W*0.5,  H*0.4),
-  new Robot('codex',  AGENTS_CFG.codex,  W*0.75, H*0.5),
-];
+function syncRobots(agentId, state) {
+  const needed = state.instances || 1;
+  const existing = [...robotPool.values()].filter(r=>r.agentId===agentId);
 
-// ── Main loop ──────────────────────────────────────────────────
-function loop() {
-  ctx.fillStyle = '#060610';
-  ctx.fillRect(0,0,W,H);
-  drawGrid();
-
-  // update & draw connections
-  drawConnections(robots);
-
-  // particles
-  particles = particles.filter(p => p.life>0);
-  particles.forEach(p => { p.update(); p.draw(); });
-
-  // robots
-  for (const r of robots) {
-    r.wander(robots);
-    r.emitParticles();
-    r.drawGlow();
+  // add
+  for (let i=existing.length; i<needed; i++) {
+    const uid = `${agentId}:${i}`;
+    robotPool.set(uid, new Robot(uid, agentId, i));
   }
-  for (const r of robots) r.drawBody();
-  for (const r of robots) r.drawBubble();
+  // remove extra
+  for (let i=needed; i<existing.length; i++) {
+    robotPool.delete(`${agentId}:${i}`);
+  }
+  // update status
+  for (let i=0; i<needed; i++) {
+    const r = robotPool.get(`${agentId}:${i}`);
+    if (r) r.setStatus(state.status, i===0 ? state.last_line : '');
+  }
+}
+
+// init defaults
+Object.keys(CONFIGS).forEach(id => syncRobots(id, {status:'idle',last_line:'',instances:1}));
+
+// ─── Main loop ────────────────────────────────────────────────────────────────
+function loop() {
+  cx.fillStyle='#020208'; cx.fillRect(0,0,W,H);
+  drawRoom();
+
+  const bots = [...robotPool.values()];
+
+  // sort by wz (back to front)
+  bots.sort((a,b)=>a.wz-b.wz);
+
+  drawBeams(bots);
+
+  particles = particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.update();p.draw();});
+
+  // glow pass
+  bots.forEach(r=>r.wander(bots));
+  // draw pass (back→front for correct layering)
+  bots.forEach(r=>r.draw());
 
   requestAnimationFrame(loop);
 }
 loop();
 
-// ── WebSocket ──────────────────────────────────────────────────
+// ─── WebSocket ────────────────────────────────────────────────────────────────
 function connect() {
   const ws = new WebSocket('ws://127.0.0.1:7788/ws');
   ws.onmessage = e => {
     const data = JSON.parse(e.data);
-    for (const r of robots) {
-      const s = data[r.id];
-      if (s) r.setStatus(s.status, s.last_line);
+    for (const [id, state] of Object.entries(data)) {
+      syncRobots(id, state);
     }
   };
   ws.onclose = () => setTimeout(connect, 2000);
