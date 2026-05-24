@@ -441,13 +441,13 @@ function setOverview(){
     camRadius*Math.sin(camPhi)*Math.cos(camTheta)
   );
   cameraTarget.look.set(0,0,0);
-  document.getElementById('mode').textContent='Arrastra para orbitar · click sala para entrar';
+  document.getElementById('mode').textContent='🖱 Arrastra para orbitar · rueda para zoom · click sala para entrar';
 }
 function enterRoom(room){
   selectedRoom=room.id;
   cameraTarget.pos.set(room.x,3.25,room.z+3.35);
   cameraTarget.look.set(room.x,.35,room.z);
-  document.getElementById('mode').textContent=`Dentro de ${room.name} · click otra habitacion para moverte`;
+  document.getElementById('mode').textContent=`Dentro de ${room.name} · ESC para salir · click otra habitacion para moverte`;
 }
 let mouseDownPos=null;
 
@@ -490,11 +490,14 @@ addEventListener('resize',()=>{
   labelRenderer.setSize(innerWidth,innerHeight);
 });
 addEventListener('wheel',e=>{
-  if(selectedRoom)return;
   e.preventDefault();
-  camRadius=Math.max(5,Math.min(30,camRadius+e.deltaY*.01));
+  if(selectedRoom)return;
+  camRadius=Math.max(4,Math.min(35,camRadius+e.deltaY*.015));
   setOverview();
 },{passive:false});
+addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&selectedRoom)setOverview();
+});
 
 function animate(){
   const dt=Math.min(.04,clock.getDelta());
