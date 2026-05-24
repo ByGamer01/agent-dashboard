@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Agent Control Room</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#060610; overflow:hidden; }
+  canvas { display:block; }
+  #hud {
+    position:fixed; top:16px; left:50%; transform:translateX(-50%);
+    font-family:'Courier New',monospace; font-size:0.65rem;
+    color:#333; letter-spacing:0.3em; text-transform:uppercase;
+    pointer-events:none;
+  }
+  #hud span { color:#1a1a3a; }
+</style>
+</head>
+<body>
+<div id="hud">⬡ AGENT CONTROL ROOM <span>// LIVE</span></div>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = canvas.width  = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+window.addEventListener('resize', () => {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+});
+
+// ── Palette ──────────────────────────────────────────────────
+const AGENTS_CFG = {
+  hermes: { name:'Hermes',      color:'#00ff88', glow:'rgba(0,255,136,', idx:0 },
+  claude: { name:'Claude Code', color:'#ff6b35', glow:'rgba(255,107,53,', idx:1 },
+  codex:  { name:'Codex',       color:'#a78bfa', glow:'rgba(167,139,250,', idx:2 },
+};
+
+// ── Particle pool ─────────────────────────────────────────────
+class Particle {
+  constructor(x,y,color) {
+    this.x = x; this.y = y;
+    this.vx = (Math.random()-0.5)*3;
+    this.vy = (Math.random()-0.5)*3 - 1.5;
+    this.life = 1;
+    this.decay = 0.02 + Math.random()*0.03;
+    this.r = 2 + Math.random()*3;
+    this.color = color;
+  }
+  update() { this.x+=this.vx; this.y+=this.vy; this.vy+=0.05; this.life-=this.decay; }
+  draw() {
+    ctx.globalAlpha = this.life * 0.8;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, Math.max(0, this.r*this.life), 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+let particles = [];
+
+// ── Robot entity ──────────────────────────────────────────────
+class Robot {
+  constructor(id, cfg, startX, startY) {
+    this.id     = id;
+    this.name   = cfg.name;
+    this.color  = cfg.color;
+    this.glow   = cfg.glow;
+    this.x      = startX;
+    this.y      = startY;
+    this.vx     = (Math.random()-0.5)*1.2;
+    this.vy     = (Math.random()-0.5)*1.2;
+    this.status = 'idle';
+    this.lastLine = '';
+    this.angle  = 0;         // body sway
+    this.eyeT   = 0;         // eye look direction
+    this.bubbleT = 0;        // speech bubble timer
+    this.scale  = 1;
+    this.targetX = startX;
+    this.targetY = startY;
+    this.wanderT = 0;
+    this.R = 40;             // robot half-size
+  }
+
+  setStatus(status, line) {
+    if (status !== this.status) {
+      this.status = status;
+      if (status === 'working') { this.scale = 1.15; }
+    }
+    if (line && line !== this.lastLine) {
+      this.lastLine = line;
+      this.bubbleT = 220;
+    }
+  }
+
+  get speed() {
+    if (this.status==='working')  return 2.2;
+    if (this.status==='thinking') return 0.9;
+    return 0.4;
+  }
+
+  wander(others) {
+    this.wanderT--;
+    if (this.wanderT <= 0) {
+      this.wanderT = 80 + Math.random()*120;
+      if (this.status==='working') {
+        // approach a random other active robot
+        const active = others.filter(r => r!==this && r.status!=='offline');
+        if (active.length) {
+          const t = active[Math.floor(Math.random()*active.length)];
+          const angle = Math.atan2(t.y-this.y, t.x-this.x) + (Math.random()-0.5)*0.6;
+          const dist = 120 + Math.random()*80;
+          this.targetX = t.x - Math.cos(angle)*dist;
+          this.targetY = t.y - Math.sin(angle)*dist;
+        }
+      } else {
+        this.targetX = 80 + Math.random()*(W-160);
+        this.targetY = 80 + Math.random()*(H-160);
+      }
+    }
+
+    const dx = this.targetX - this.x;
+    const dy = this.targetY - this.y;
+    const d  = Math.sqrt(dx*dx+dy*dy)+0.01;
+    const spd = this.speed;
+    this.vx += (dx/d)*spd*0.08;
+    this.vy += (dy/d)*spd*0.08;
+    this.vx *= 0.92;
+    this.vy *= 0.92;
+
+    // wall bounce
+    const pad = this.R+10;
+    if (this.x < pad)   { this.vx += 0.5; this.targetX = W/2; }
+    if (this.x > W-pad) { this.vx -= 0.5; this.targetX = W/2; }
+    if (this.y < pad+40){ this.vy += 0.5; this.targetY = H/2; }
+    if (this.y > H-pad) { this.vy -= 0.5; this.targetY = H/2; }
+
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // sway & eye
+    this.angle = Math.sin(Date.now()*0.002)*0.06 * (this.status==='working'?2.5:1);
+    this.eyeT += 0.03;
+    this.scale += (1 - this.scale)*0.08;
+  }
+
+  emitParticles() {
+    if (this.status==='working' && Math.random()<0.4) {
+      particles.push(new Particle(
+        this.x + (Math.random()-0.5)*30,
+        this.y - this.R*this.scale + 5,
+        this.color
+      ));
+    }
+    if (this.status==='thinking' && Math.random()<0.12) {
+      particles.push(new Particle(
+        this.x + (Math.random()-0.5)*20,
+        this.y - this.R*this.scale,
+        this.color
+      ));
+    }
+  }
+
+  drawGlow() {
+    const r = this.R * this.scale;
+    const intensity = this.status==='working' ? 0.35 : this.status==='thinking' ? 0.15 : 0.04;
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r*2.5);
+    grad.addColorStop(0, this.glow + intensity + ')');
+    grad.addColorStop(1, this.glow + '0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r*2.5, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  drawBody() {
+    const s = this.scale;
+    const x = this.x, y = this.y;
+    const c = this.color;
+    const dim = this.status==='idle' ? 0.45 : this.status==='offline' ? 0.15 : 1;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(this.angle);
+    ctx.globalAlpha = dim;
+
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(0, 36*s, 24*s, 6*s, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // legs
+    for (let i of [-1,1]) {
+      ctx.fillStyle = '#0d0d1a';
+      roundRect(-8*s+i*10*s, 26*s, 10*s, 16*s, 4*s);
+      ctx.strokeStyle = c; ctx.lineWidth = 1.5*s;
+      roundRect(-8*s+i*10*s, 26*s, 10*s, 16*s, 4*s, true);
+    }
+
+    // arms
+    for (let i of [-1,1]) {
+      ctx.fillStyle = '#0d0d1a';
+      roundRect(i*22*s-5*s, -8*s, 8*s, 20*s, 4*s);
+      ctx.strokeStyle = c; ctx.lineWidth = 1.5*s;
+      roundRect(i*22*s-5*s, -8*s, 8*s, 20*s, 4*s, true);
+    }
+
+    // body
+    ctx.fillStyle = '#0d0d1a';
+    roundRect(-18*s, -10*s, 36*s, 38*s, 8*s);
+    ctx.strokeStyle = c; ctx.lineWidth = 2*s;
+    roundRect(-18*s, -10*s, 36*s, 38*s, 8*s, true);
+
+    // chest light
+    const pulse = 0.5 + 0.5*Math.sin(Date.now()*0.005*(this.status==='working'?4:1));
+    const lg = ctx.createRadialGradient(0,8*s,0, 0,8*s,10*s);
+    lg.addColorStop(0, c);
+    lg.addColorStop(1, 'transparent');
+    ctx.fillStyle = lg;
+    ctx.globalAlpha = dim * (0.4 + 0.6*pulse);
+    ctx.beginPath(); ctx.arc(0, 8*s, 10*s, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = dim;
+    ctx.fillStyle = c;
+    ctx.beginPath(); ctx.arc(0, 8*s, 4*s, 0, Math.PI*2); ctx.fill();
+
+    // side buttons
+    for (let i of [-1,1]) {
+      ctx.globalAlpha = dim * (0.3 + 0.7*Math.random()*0.3);
+      ctx.fillStyle = c;
+      roundRect(i*10*s, 20*s, 5*s, 3*s, 1.5*s);
+    }
+    ctx.globalAlpha = dim;
+
+    // head
+    ctx.fillStyle = '#0d0d1a';
+    roundRect(-16*s, -38*s, 32*s, 30*s, 8*s);
+    ctx.strokeStyle = c; ctx.lineWidth = 2*s;
+    roundRect(-16*s, -38*s, 32*s, 30*s, 8*s, true);
+
+    // antenna
+    ctx.strokeStyle = c; ctx.lineWidth = 2*s;
+    ctx.beginPath(); ctx.moveTo(0,-38*s); ctx.lineTo(0,-48*s); ctx.stroke();
+    ctx.fillStyle = c;
+    ctx.beginPath(); ctx.arc(0,-50*s, 4*s, 0, Math.PI*2); ctx.fill();
+
+    // eyes
+    const eyeOff = Math.sin(this.eyeT)*3*s;
+    for (let i of [-1,1]) {
+      const ex = i*8*s, ey = -26*s;
+      ctx.fillStyle = c; ctx.globalAlpha = dim*0.15;
+      ctx.beginPath(); ctx.arc(ex, ey, 7*s, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = dim;
+      ctx.fillStyle = c;
+      ctx.beginPath(); ctx.arc(ex+eyeOff*0.3, ey, 4*s, 0, Math.PI*2); ctx.fill();
+      // glint
+      ctx.fillStyle = 'white'; ctx.globalAlpha = dim*0.7;
+      ctx.beginPath(); ctx.arc(ex+eyeOff*0.3+1.5*s, ey-1.5*s, 1.5*s, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = dim;
+    }
+
+    // mouth — changes with status
+    if (this.status==='working') {
+      // big smile
+      ctx.strokeStyle = c; ctx.lineWidth = 2*s; ctx.globalAlpha = dim;
+      ctx.beginPath();
+      ctx.arc(0, -16*s, 8*s, 0.2, Math.PI-0.2);
+      ctx.stroke();
+    } else if (this.status==='thinking') {
+      // small line
+      ctx.fillStyle = c; ctx.globalAlpha = dim*0.6;
+      roundRect(-5*s, -13*s, 10*s, 2*s, 1*s);
+    } else {
+      // neutral
+      ctx.fillStyle = c; ctx.globalAlpha = dim*0.4;
+      roundRect(-8*s, -13*s, 16*s, 2*s, 1*s);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // name label
+    ctx.globalAlpha = 0.6;
+    ctx.font = `bold ${11*s}px Courier New`;
+    ctx.fillStyle = c;
+    ctx.textAlign = 'center';
+    ctx.fillText(this.name.toUpperCase(), x, y + 50*s);
+
+    // status badge
+    ctx.font = `${9*s}px Courier New`;
+    ctx.fillStyle = c;
+    ctx.globalAlpha = this.status==='idle' ? 0.3 : 0.9;
+    ctx.fillText(this.status.toUpperCase(), x, y + 63*s);
+    ctx.globalAlpha = 1;
+  }
+
+  drawBubble() {
+    if (this.bubbleT <= 0 || !this.lastLine) return;
+    const alpha = Math.min(1, this.bubbleT/30) * Math.min(1, this.bubbleT/220*3);
+    const text = this.lastLine.slice(0,50) + (this.lastLine.length>50?'…':'');
+    const s = this.scale;
+    const bx = this.x + 28*s;
+    const by = this.y - 55*s;
+    const pad = 8, lh = 14;
+    const lines = wrapText(text, 160);
+    const bw = 170, bh = lines.length*lh + pad*2;
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#0d0d1a';
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 1.5;
+    roundRect(bx, by-bh, bw, bh, 6);
+    ctx.fillStyle = '#0d0d1a'; roundRect(bx, by-bh, bw, bh, 6);
+    ctx.strokeStyle = this.color; roundRect(bx, by-bh, bw, bh, 6, true);
+
+    // tail
+    ctx.beginPath();
+    ctx.moveTo(bx, by-4); ctx.lineTo(bx-10, by+4); ctx.lineTo(bx+8, by-4);
+    ctx.fillStyle = '#0d0d1a'; ctx.fill();
+    ctx.strokeStyle = this.color; ctx.stroke();
+
+    ctx.fillStyle = this.color;
+    ctx.font = '9px Courier New';
+    ctx.textAlign = 'left';
+    lines.forEach((l,i) => ctx.fillText(l, bx+pad, by-bh+pad+lh*(i+0.8)));
+    ctx.globalAlpha = 1;
+    this.bubbleT--;
+  }
+}
+
+function roundRect(x,y,w,h,r, stroke=false) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
+  ctx.closePath();
+  if (stroke) ctx.stroke(); else ctx.fill();
+}
+
+function wrapText(text, maxW) {
+  const words = text.split(' ');
+  const lines = []; let cur = '';
+  for (const w of words) {
+    const test = cur ? cur+' '+w : w;
+    if (ctx.measureText(test).width > maxW) { lines.push(cur); cur=w; }
+    else cur = test;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+// ── Draw connection beams between working robots ───────────────
+function drawConnections(robots) {
+  const active = robots.filter(r => r.status==='working');
+  for (let i=0; i<active.length; i++) {
+    for (let j=i+1; j<active.length; j++) {
+      const a=active[i], b=active[j];
+      const t = Date.now()*0.003;
+      const midX = (a.x+b.x)/2 + Math.sin(t)*20;
+      const midY = (a.y+b.y)/2 + Math.cos(t)*20;
+      const grad = ctx.createLinearGradient(a.x,a.y,b.x,b.y);
+      grad.addColorStop(0, a.color);
+      grad.addColorStop(1, b.color);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.25 + 0.15*Math.sin(t*3);
+      ctx.beginPath();
+      ctx.moveTo(a.x,a.y);
+      ctx.quadraticCurveTo(midX,midY,b.x,b.y);
+      ctx.stroke();
+      // moving dot along beam
+      const p = (Math.sin(t)+1)/2;
+      const bx = bezier(a.x,midX,b.x,p);
+      const by2 = bezier(a.y,midY,b.y,p);
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(bx,by2,2.5,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function bezier(a,b,c,t) {
+  return (1-t)*(1-t)*a + 2*(1-t)*t*b + t*t*c;
+}
+
+// ── Grid background ────────────────────────────────────────────
+function drawGrid() {
+  ctx.strokeStyle = 'rgba(30,30,80,0.4)';
+  ctx.lineWidth = 0.5;
+  const step = 60;
+  for (let x=0;x<W;x+=step) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y=0;y<H;y+=step) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+}
+
+// ── Init robots ────────────────────────────────────────────────
+const robots = [
+  new Robot('hermes', AGENTS_CFG.hermes, W*0.25, H*0.5),
+  new Robot('claude', AGENTS_CFG.claude, W*0.5,  H*0.4),
+  new Robot('codex',  AGENTS_CFG.codex,  W*0.75, H*0.5),
+];
+
+// ── Main loop ──────────────────────────────────────────────────
+function loop() {
+  ctx.fillStyle = '#060610';
+  ctx.fillRect(0,0,W,H);
+  drawGrid();
+
+  // update & draw connections
+  drawConnections(robots);
+
+  // particles
+  particles = particles.filter(p => p.life>0);
+  particles.forEach(p => { p.update(); p.draw(); });
+
+  // robots
+  for (const r of robots) {
+    r.wander(robots);
+    r.emitParticles();
+    r.drawGlow();
+  }
+  for (const r of robots) r.drawBody();
+  for (const r of robots) r.drawBubble();
+
+  requestAnimationFrame(loop);
+}
+loop();
+
+// ── WebSocket ──────────────────────────────────────────────────
+function connect() {
+  const ws = new WebSocket('ws://127.0.0.1:7788/ws');
+  ws.onmessage = e => {
+    const data = JSON.parse(e.data);
+    for (const r of robots) {
+      const s = data[r.id];
+      if (s) r.setStatus(s.status, s.last_line);
+    }
+  };
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+connect();
+</script>
+</body>
+</html>
