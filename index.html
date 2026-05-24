@@ -73,12 +73,14 @@ const clock=new THREE.Clock();
 const CONFIGS={
   hermes:{name:'Hermes',kind:'cat',color:0x00ff9d,shade:0x00a86b},
   claude:{name:'Claude Code',kind:'fox',color:0xff7a2f,shade:0xb83a12},
-  codex:{name:'Codex',kind:'owl',color:0xb56cff,shade:0x6d28d9}
+  codex:{name:'Codex',kind:'owl',color:0xb56cff,shade:0x6d28d9},
+  ollama:{name:'Ollama',kind:'llama',color:0x38bdf8,shade:0x0f766e}
 };
 const FALLBACK_MESSAGES={
   hermes:['rastreando tareas','sincronizando memoria','olfateando logs','preparando ruta'],
   claude:['pensando respuesta','ordenando contexto','escribiendo plan','comparando opciones'],
-  codex:['editando archivos','leyendo proyecto','probando cambios','revisando diffs']
+  codex:['editando archivos','leyendo proyecto','probando cambios','revisando diffs'],
+  ollama:['calentando modelo local','sirviendo embeddings','respondiendo en local','cargando pesos']
 };
 
 const rooms=[
@@ -94,6 +96,12 @@ const roomLinks={
   lounge:['kitchen','server'],
   server:['lab','lounge']
 };
+const roomExits={
+  kitchen:{lab:new THREE.Vector3(0,.22,-2.05),lounge:new THREE.Vector3(-3.05,.22,0)},
+  lab:{kitchen:new THREE.Vector3(0,.22,-2.05),server:new THREE.Vector3(3.05,.22,0)},
+  lounge:{kitchen:new THREE.Vector3(-3.05,.22,0),server:new THREE.Vector3(0,.22,2.05)},
+  server:{lab:new THREE.Vector3(3.05,.22,0),lounge:new THREE.Vector3(0,.22,2.05)}
+};
 
 let selectedRoom=null;
 const cameraTarget={pos:new THREE.Vector3(0,10,10),look:new THREE.Vector3(0,0,0)};
@@ -104,6 +112,8 @@ initLights();
 buildHouse();
 buildAppliances();
 setOverview();
+camera.position.copy(cameraTarget.pos);
+camera.lookAt(cameraTarget.look);
 connect();
 animate();
 
@@ -188,6 +198,7 @@ function buildAppliances(){
   addAppliance('Mesa',-2.7,.3,2.15,.9,.4,.9,0xfacc15);
   addAppliance('Rack',4.85,.65,3.1,.8,1.25,.55,0x60a5fa);
   addAppliance('Terminal',3.55,.55,1.6,1.15,.55,.45,0xa78bfa);
+  addAppliance('Ollama',4.45,.42,1.55,.72,.62,.72,0x38bdf8,true);
 }
 function addAppliance(label,x,y,z,w,h,d,color,round=false){
   const mat=new THREE.MeshStandardMaterial({color,roughness:.34,metalness:.25,emissive:color,emissiveIntensity:.08});
@@ -207,6 +218,7 @@ class AgentPet{
     this.room=rooms[idx%rooms.length].id;
     this.targetRoom=this.room;
     this.phase='wander';
+    this.doorFrom=null;
     this.pos=randomPointInRoom(this.room);
     this.target=this.pos.clone();
     this.velocity=new THREE.Vector3();
@@ -237,6 +249,7 @@ class AgentPet{
       const options=roomLinks[this.room];
       this.targetRoom=options[Math.floor(Math.random()*options.length)];
       this.phase='toDoor';
+      this.doorFrom=this.room;
       this.target=doorPoint(this.room,this.targetRoom);
       this.message=`voy a ${roomById[this.targetRoom].name.toLowerCase()}`;
       this.setBubble(this.message);
@@ -258,8 +271,10 @@ class AgentPet{
       if(this.phase==='toDoor'){
         this.room=this.targetRoom;
         this.phase='fromDoor';
-        this.pos.copy(doorPoint(this.room,oppositeRoom(this.room)));
+        this.pos.copy(doorPoint(this.room,this.doorFrom));
         this.target=randomPointInRoom(this.room);
+        this.message=`entrando en ${roomById[this.room].name.toLowerCase()}`;
+        this.setBubble(this.message);
       }else this.pickTarget();
     }
     const dir=this.target.clone().sub(this.pos);
@@ -307,11 +322,19 @@ function buildPet(kind,color,shade){
       const chest=new THREE.Mesh(new THREE.SphereGeometry(.21,18,12),white);chest.position.set(0,.28,.43);chest.scale.set(.9,1,.35);g.add(chest);
       const tip=new THREE.Mesh(new THREE.SphereGeometry(.11,16,10),white);tip.position.set(-.65,.38,-.38);g.add(tip);
     }
-  }else{
+  }else if(kind==='owl'){
     addEar(g,-.18,.72,.18,bodyMat);addEar(g,.18,.72,.18,bodyMat);
     const wingL=new THREE.Mesh(new THREE.SphereGeometry(.2,16,10),shadeMat);wingL.position.set(-.34,.2,.03);wingL.scale.set(.45,1.15,.18);g.add(wingL);
     const wingR=wingL.clone();wingR.position.x=.34;g.add(wingR);
     const beak=new THREE.Mesh(new THREE.ConeGeometry(.08,.18,4),yellow);beak.position.set(0,.43,.5);beak.rotation.x=Math.PI*.5;g.add(beak);
+  }else{
+    const neck=new THREE.Mesh(new THREE.CapsuleGeometry(.11,.38,8,14),bodyMat);
+    neck.position.set(0,.53,.04);neck.castShadow=true;g.add(neck);
+    const muzzle=new THREE.Mesh(new THREE.SphereGeometry(.14,16,10),shadeMat);
+    muzzle.position.set(0,.4,.52);muzzle.scale.set(1.15,.7,.75);g.add(muzzle);
+    addEar(g,-.14,.86,.14,bodyMat);addEar(g,.14,.86,.14,bodyMat);
+    const pack=new THREE.Mesh(new THREE.BoxGeometry(.38,.18,.34),shadeMat);
+    pack.position.set(0,.2,-.36);pack.castShadow=true;g.add(pack);
   }
 
   [-.1,.1].forEach(x=>{
@@ -349,15 +372,11 @@ function constrainToRoom(agent){
   agent.pos.z=THREE.MathUtils.clamp(agent.pos.z,r.z-r.d*.5+pad,r.z+r.d*.5-pad);
 }
 function doorPoint(from,to){
-  const a=roomById[from],b=roomById[to]||a;
-  return new THREE.Vector3((a.x+b.x)/2,.22,(a.z+b.z)/2);
-}
-function oppositeRoom(roomId){
-  return roomLinks[roomId]?.[0]||roomId;
+  return roomExits[from]?.[to]?.clone()||randomPointInRoom(from);
 }
 
 function syncAgents(agentId,state){
-  const needed=state.instances||1;
+  const needed=state.instances??0;
   const existing=[...agents.values()].filter(a=>a.agentId===agentId);
   for(let i=existing.length;i<needed;i++){
     const pet=new AgentPet(`${agentId}:${i}`,agentId,i);
@@ -372,7 +391,7 @@ function syncAgents(agentId,state){
     if(pet) pet.setStatus(state.status,i===0?state.last_line:'');
   }
 }
-Object.keys(CONFIGS).forEach(id=>syncAgents(id,{status:'idle',last_line:'',instances:1}));
+Object.keys(CONFIGS).forEach(id=>syncAgents(id,{status:'idle',last_line:'',instances:0}));
 
 function updateInteractions(){
   interactionLines.forEach(l=>scene.remove(l));

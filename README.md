@@ -213,9 +213,10 @@ Los agentes configurados actualmente son:
 
 | Agente | ID interno | Color UI | Fuente de actividad | Patron de proceso |
 | --- | --- | --- | --- | --- |
-| Hermes | `hermes` | Verde neon | `~/.hermes/logs/agent.log` | `venv/bin/hermes` |
-| Claude Code | `claude` | Naranja | `~/.claude/projects/**/*.jsonl` | `opt/homebrew/bin/claude` |
-| Codex | `codex` | Violeta | `~/.codex/log/codex-tui.log` | `local/bin/codex` |
+| Hermes | `hermes` | Verde neon | `~/.hermes/logs/agent.log` | CLI en terminal: `venv/bin/hermes`, `hermes` |
+| Claude Code | `claude` | Naranja | `~/.claude/projects/**/*.jsonl` | CLI en terminal: `opt/homebrew/bin/claude`, `claude`, `claude.exe` |
+| Codex | `codex` | Violeta | `~/.codex/log/codex-tui.log` | CLI en terminal: `local/bin/codex`, `codex`, `codex.exe` |
+| Ollama | `ollama` | Azul cian | `~/Library/Logs/Ollama/server.log`, `~/.ollama/logs/server.log`, `%LOCALAPPDATA%/Ollama/server.log` | `ollama`, `ollama.exe` |
 
 Estas fuentes se definen en `server.py`:
 
@@ -224,6 +225,7 @@ LOG_SOURCES = {
     "hermes": Path.home() / ".hermes/logs/agent.log",
     "claude": Path.home() / ".claude/projects",
     "codex":  Path.home() / ".codex/log/codex-tui.log",
+    "ollama": first_existing(...),
 }
 ```
 
@@ -231,9 +233,10 @@ Y los patrones de proceso se definen aqui:
 
 ```python
 PROCESS_PATTERNS = {
-    "hermes": "venv/bin/hermes",
-    "claude": "opt/homebrew/bin/claude",
-    "codex":  "local/bin/codex",
+    "hermes": {"posix": {"commands": [...], "contains": [...], "require_tty": True}, ...},
+    "claude": {"posix": {"commands": [...], "contains": [...], "require_tty": True}, ...},
+    "codex":  {"posix": {"commands": [...], "contains": [...], "require_tty": True}, ...},
+    "ollama": {"posix": {"commands": [...], "contains": [...], "require_tty": False}, ...},
 }
 ```
 
@@ -529,19 +532,26 @@ Edita `PROCESS_PATTERNS` en `server.py`:
 
 ```python
 PROCESS_PATTERNS = {
-    "hermes": "venv/bin/hermes",
-    "claude": "opt/homebrew/bin/claude",
-    "codex":  "local/bin/codex",
+    "hermes": {"posix": ["venv/bin/hermes", "hermes"], "windows": ["hermes.exe", "hermes"]},
+    "claude": {"posix": ["opt/homebrew/bin/claude", "claude"], "windows": ["claude.exe", "claude"]},
+    "codex":  {"posix": ["local/bin/codex", "codex"], "windows": ["codex.exe", "codex"]},
+    "ollama": {"posix": ["ollama"], "windows": ["ollama.exe", "ollama"]},
 }
 ```
 
-Los patrones se buscan dentro de la salida de:
+En macOS y Linux los patrones se buscan dentro de la salida de:
 
 ```bash
 ps aux
 ```
 
-La funcion `count_instances()` solo cuenta procesos cuyo TTY empieza por `s`, por ejemplo `s000` o `s001`. La intencion es contar sesiones de terminal en primer plano y evitar subprocesses o daemons en segundo plano. Aun asi, conviene que los patrones sean suficientemente especificos para reducir falsos positivos.
+En Windows se usa:
+
+```powershell
+tasklist /FO CSV /NH
+```
+
+Para Hermes, Claude Code y Codex en macOS/Linux se exige TTY de terminal, por lo que no se cuentan apps de escritorio ni helpers de fondo. Ollama permite procesos sin TTY porque normalmente corre como servicio local.
 
 ## Personalizacion
 
@@ -763,9 +773,9 @@ No cambies el host a `0.0.0.0` salvo que entiendas el riesgo. Si se expone en re
 - El cliente WebSocket usa una URL fija.
 - La configuracion de agentes esta repartida entre backend y frontend.
 - Los logs de Hermes y Codex se leen solo si el archivo existe al arrancar la tarea.
-- La deteccion de instancias mediante busqueda textual sobre `ps aux` puede producir falsos positivos si los patrones son demasiado amplios.
+- La deteccion de instancias mediante busqueda textual sobre `ps aux` o `tasklist` puede producir falsos positivos si los patrones son demasiado amplios.
 - Claude depende del formato actual de los archivos JSONL en `~/.claude/projects`.
-- El script `widget.sh` esta orientado a macOS y Google Chrome.
+- `widget.sh` esta orientado a macOS y `widget.ps1` cubre Windows con Chrome o navegador predeterminado.
 
 ## Roadmap sugerido
 

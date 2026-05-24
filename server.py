@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import platform
 import subprocess
 import time
 from contextlib import asynccontextmanager
@@ -9,46 +11,108 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
+def first_existing(*paths: Path):
+    for path in paths:
+        if path and path.exists():
+            return path
+    return paths[0] if paths else None
+
+
+HOME = Path.home()
+LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", HOME))
+
 LOG_SOURCES = {
-    "hermes": Path.home() / ".hermes/logs/agent.log",
-    "claude": Path.home() / ".claude/projects",
-    "codex":  Path.home() / ".codex/log/codex-tui.log",
+    "hermes": HOME / ".hermes/logs/agent.log",
+    "claude": HOME / ".claude/projects",
+    "codex":  HOME / ".codex/log/codex-tui.log",
+    "ollama": first_existing(
+        HOME / "Library/Logs/Ollama/server.log",
+        HOME / ".ollama/logs/server.log",
+        LOCALAPPDATA / "Ollama/server.log",
+    ),
 }
 
-# Match only foreground terminal sessions, not subprocesses/background daemons
 PROCESS_PATTERNS = {
-    "hermes": "venv/bin/hermes",
-    "claude": "opt/homebrew/bin/claude",
-    "codex":  "local/bin/codex",
+    "hermes": {
+        "posix": {"commands": ["hermes"], "contains": ["venv/bin/hermes"], "require_tty": True},
+        "windows": {"commands": ["hermes.exe", "hermes"]},
+    },
+    "claude": {
+        "posix": {"commands": ["claude"], "contains": ["opt/homebrew/bin/claude"], "require_tty": True},
+        "windows": {"commands": ["claude.exe", "claude"]},
+    },
+    "codex": {
+        "posix": {"commands": ["codex"], "contains": ["local/bin/codex"], "require_tty": True},
+        "windows": {"commands": ["codex.exe", "codex"]},
+    },
+    "ollama": {
+        "posix": {"commands": ["ollama"], "contains": ["Ollama.app", "ollama serve"], "require_tty": False},
+        "windows": {"commands": ["ollama.exe", "ollama"]},
+    },
 }
 
 agent_states = {
-    "hermes": {"status": "idle", "last_line": "", "activity": 0, "instances": 1},
-    "claude": {"status": "idle", "last_line": "", "activity": 0, "instances": 1},
-    "codex":  {"status": "idle", "last_line": "", "activity": 0, "instances": 1},
+    "hermes": {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
+    "claude": {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
+    "codex":  {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
+    "ollama": {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
 }
 
 clients: set = set()
 
 
-def count_instances(cmd_pattern: str) -> int:
-    """Count only foreground terminal sessions (tty s00X), not background daemons."""
+def active_patterns(pattern_config: dict) -> list[str]:
+    key = "windows" if platform.system().lower().startswith("win") else "posix"
+    return pattern_config.get(key, {})
+
+
+def matches_process(command: str, args: str, rules: dict) -> bool:
+    command_name = Path(command).name.lower()
+    commands = [c.lower() for c in rules.get("commands", [])]
+    contains = [c.lower() for c in rules.get("contains", [])]
+    haystack = f"{command} {args}".lower()
+    return command_name in commands or any(fragment in haystack for fragment in contains)
+
+
+def count_instances(pattern_config: dict) -> int:
+    """Count agent processes on macOS/Linux and Windows."""
+    rules = active_patterns(pattern_config)
+    if not rules:
+        return 0
     try:
-        result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+        if platform.system().lower().startswith("win"):
+            result = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                shell=False,
+            )
+            count = 0
+            commands = [c.lower() for c in rules.get("commands", [])]
+            for line in result.stdout.splitlines():
+                image_name = line.split(",", 1)[0].strip().strip('"').lower()
+                if image_name in commands:
+                    count += 1
+            return count
+        else:
+            result = subprocess.run(
+                ["ps", "-axo", "pid=,tty=,comm=,args="],
+                capture_output=True,
+                text=True,
+            )
         count = 0
         for line in result.stdout.splitlines():
-            if cmd_pattern not in line:
+            parts = line.split(None, 3)
+            if len(parts) < 4:
                 continue
-            parts = line.split()
-            if len(parts) < 7:
+            _pid, tty, command, args = parts
+            if rules.get("require_tty") and tty == "??":
                 continue
-            tty = parts[6]  # TTY column
-            # Only count sessions attached to a terminal (s000, s001, etc.)
-            if tty.startswith("s"):
+            if matches_process(command, args, rules):
                 count += 1
-        return max(1, count)
+        return count
     except Exception:
-        return 1
+        return 0
 
 
 def get_latest_claude_line() -> str:
@@ -153,6 +217,7 @@ async def broadcast():
 async def lifespan(_app):
     asyncio.create_task(tail_log(LOG_SOURCES["hermes"], "hermes"))
     asyncio.create_task(tail_log(LOG_SOURCES["codex"], "codex"))
+    asyncio.create_task(tail_log(LOG_SOURCES["ollama"], "ollama"))
     asyncio.create_task(poll_claude())
     asyncio.create_task(poll_instances())
     asyncio.create_task(decay_status())
