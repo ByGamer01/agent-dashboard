@@ -42,6 +42,27 @@
   #offline-overlay.visible{opacity:1}
   #offline-overlay .sym{font-size:3rem;color:rgba(239,68,68,.6);margin-bottom:12px}
   #offline-overlay .msg{font-size:.7rem;color:rgba(239,68,68,.5);letter-spacing:.2em}
+  #nav{
+    position:fixed;bottom:42px;left:50%;transform:translateX(-50%);
+    z-index:5;display:flex;gap:10px;align-items:center;
+  }
+  #nav button{
+    background:rgba(3,7,18,.82);border:1.5px solid rgba(34,211,238,.55);
+    color:rgba(236,252,255,.85);font-family:'Courier New',monospace;
+    font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
+    padding:6px 14px;border-radius:6px;cursor:pointer;
+    transition:border-color .2s,box-shadow .2s,color .2s;
+  }
+  #nav button:hover{
+    border-color:rgba(34,211,238,1);box-shadow:0 0 12px rgba(34,211,238,.5);
+    color:#ecfeff;
+  }
+  #nav button.overview{
+    border-color:rgba(249,115,22,.55);
+  }
+  #nav button.overview:hover{
+    border-color:rgba(249,115,22,1);box-shadow:0 0 12px rgba(249,115,22,.5);
+  }
 </style>
 <script type="importmap">
 {
@@ -57,6 +78,7 @@
 <div id="mode">Click room to enter · click outside to overview</div>
 <div id="conn-status" class="online">● ONLINE</div>
 <div id="offline-overlay"><div class="sym">⚠</div><div class="msg">CONNECTION LOST — RECONNECTING…</div></div>
+<div id="nav"></div>
 <script type="module">
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
@@ -128,6 +150,8 @@ let camTheta=0,camPhi=1.05,camRadius=12.8;
 let isOrbiting=false,orbitPrev={x:0,y:0};
 const agents=new Map();
 const interactionLines=[];
+const navEl=document.getElementById('nav');
+const ROOM_LABELS={kitchen:'Cocina',lab:'Laboratorio',lounge:'Salon',server:'Sala Servidor'};
 
 initLights();
 buildHouse();
@@ -191,10 +215,10 @@ function buildHouse(){
   addWall(5.025,1.05,0,1.75,.28,.24,0x334155);  // right segment: x=2.35 to 6.4
 
   // Door arch glows at each gap
-  addDoorGlow(0,.15,-2.05,.18,.45,0x22d3ee);
-  addDoorGlow(0,.15,2.05,.18,.45,0x22d3ee);
-  addDoorGlow(-3.05,.15,0,.45,.18,0xf97316);
-  addDoorGlow(3.05,.15,0,.45,.18,0xf97316);
+  addDoorGlow(0,.15,-2.05,.18,.45,0x22d3ee,'kitchen','lab');
+  addDoorGlow(0,.15,2.05,.18,.45,0x22d3ee,'lounge','server');
+  addDoorGlow(-3.05,.15,0,.45,.18,0xf97316,'kitchen','lounge');
+  addDoorGlow(3.05,.15,0,.45,.18,0xf97316,'lab','server');
 
   const roof=new THREE.Mesh(
     new THREE.ConeGeometry(7.9,2.3,4),
@@ -208,12 +232,16 @@ function addWall(x,y,z,w,h,d,color){
   const wall=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color,roughness:.6,metalness:.08}));
   wall.position.set(x,y,z);wall.castShadow=true;wall.receiveShadow=true;scene.add(wall);
 }
-function addDoorGlow(x,y,z,w,d,color){
+function addDoorGlow(x,y,z,w,d,color,roomA,roomB){
   const door=new THREE.Mesh(
     new THREE.BoxGeometry(w,.08,d),
     new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:.85,transparent:true,opacity:.78})
   );
-  door.position.set(x,y,z);scene.add(door);
+  door.position.set(x,y,z);
+  door.userData.doorRoomA=roomA;
+  door.userData.doorRoomB=roomB;
+  scene.add(door);
+  clickableDoors.push(door);
 }
 function addRoomLight(room){
   const lamp=new THREE.PointLight(room.accent,1.8,6);
@@ -221,24 +249,132 @@ function addRoomLight(room){
 }
 
 function buildAppliances(){
-  addAppliance('Nevera',-4.7,.45,-3.2,.75,.9,.55,0x67e8f9);
-  addAppliance('Lavadora',-3.6,.42,-3.25,.7,.75,.55,0xa7f3d0,true);
-  addAppliance('Horno',1.7,.42,-3.25,.85,.75,.55,0xf59e0b);
-  addAppliance('Micro',2.9,.65,-3.25,.75,.45,.45,0xf472b6);
-  addAppliance('Sofa',-4.2,.35,3.1,1.55,.55,.62,0xfb7185);
-  addAppliance('Mesa',-2.7,.3,2.15,.9,.4,.9,0xfacc15);
-  addAppliance('Rack',4.85,.65,3.1,.8,1.25,.55,0x60a5fa);
-  addAppliance('Terminal',3.55,.55,1.6,1.15,.55,.45,0xa78bfa);
-  addAppliance('Ollama',4.45,.42,1.55,.72,.62,.72,0x38bdf8,true);
+  buildFridge(-4.7,-3.2);
+  buildWasher(-3.6,-3.25);
+  buildOven(1.7,-3.25);
+  buildMicrowave(2.9,-3.25);
+  buildSofa(-4.2,3.1);
+  buildCoffeeTable(-2.7,2.15);
+  buildServerRack(4.85,3.1);
+  buildTerminal(3.55,1.6);
+  buildOllamaStation(4.45,1.55);
 }
-function addAppliance(label,x,y,z,w,h,d,color,round=false){
-  const mat=new THREE.MeshStandardMaterial({color,roughness:.34,metalness:.25,emissive:color,emissiveIntensity:.08});
-  const geo=round?new THREE.CylinderGeometry(w*.42,w*.42,h,32):new THREE.BoxGeometry(w,h,d);
-  const mesh=new THREE.Mesh(geo,mat);
+function mat(color,emissive=0x000000,intensity=0){
+  return new THREE.MeshStandardMaterial({color,roughness:.36,metalness:.18,emissive,emissiveIntensity:intensity});
+}
+function box(x,y,z,w,h,d,color,emissive=0x000000,intensity=0){
+  const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(color,emissive,intensity));
   mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);
-  const light=new THREE.PointLight(color,.65,2.2);light.position.set(x,y+h*.8,z);scene.add(light);
-  const tag=makeTextLabel(label.toUpperCase(),'label','#ecfeff');
-  tag.position.set(x,y+h*.75,z);scene.add(tag);
+  return mesh;
+}
+function cyl(x,y,z,r,h,color,rotX=0,emissive=0x000000,intensity=0){
+  const mesh=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,32),mat(color,emissive,intensity));
+  mesh.position.set(x,y,z);mesh.rotation.x=rotX;mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);
+  return mesh;
+}
+function tag3d(text,x,y,z,color='#ecfeff'){
+  const tag=makeTextLabel(text,'label',color);
+  tag.position.set(x,y,z);scene.add(tag);
+  return tag;
+}
+function addGlow(x,y,z,color,intensity=.75,dist=2.1){
+  const light=new THREE.PointLight(color,intensity,dist);
+  light.position.set(x,y,z);scene.add(light);
+}
+function buildFridge(x,z){
+  box(x,.68,z,.78,1.36,.58,0xdff9ff,0x67e8f9,.05);
+  box(x-.205,.72,z+.301,.34,1.16,.03,0xbff4ff);
+  box(x+.205,.72,z+.301,.34,1.16,.03,0xeafcff);
+  box(x,.19,z+.305,.73,.12,.04,0x0f172a,0x22d3ee,.35);
+  box(x-.39,.72,z+.34,.035,.72,.035,0x0f172a);
+  box(x+.39,.72,z+.34,.035,.72,.035,0x0f172a);
+  box(x+.11,.92,z+.345,.18,.12,.025,0x0b1222,0x38bdf8,.7);
+  for(let i=0;i<5;i++) box(x-.22+i*.11,1.26,z+.34,.045,.035,.018,[0xf97316,0x22d3ee,0xa3e635,0xf472b6,0xfacc15][i],0xffffff,.15);
+  box(x,.04,z+.02,.86,.08,.66,0x0f172a);
+  addGlow(x,.95,z+.55,0x67e8f9,.9,2.4);
+  tag3d('NEVERA',x,1.48,z,'#67e8f9');
+}
+function buildWasher(x,z){
+  box(x,.43,z,.72,.78,.56,0xe0fff2,0xa7f3d0,.05);
+  const door=cyl(x,.43,z+.305,.23,.055,0x0f172a,Math.PI/2,0x60a5fa,.35);
+  const glass=cyl(x,.43,z+.34,.17,.035,0x7dd3fc,Math.PI/2,0x38bdf8,.5);
+  box(x-.22,.79,z+.315,.18,.08,.035,0x0f172a,0x22d3ee,.5);
+  for(let i=0;i<4;i++) cyl(x+.02+i*.09,.8,z+.335,.025,.025,[0x22d3ee,0xf97316,0xa3e635,0xf472b6][i],Math.PI/2,0xffffff,.2);
+  box(x-.28,.04,z,.16,.08,.48,0x0f172a);box(x+.28,.04,z,.16,.08,.48,0x0f172a);
+  addGlow(x,.78,z+.52,0xa7f3d0,.7,2.1);
+  tag3d('LAVADORA',x,1.0,z,'#a7f3d0');
+}
+function buildOven(x,z){
+  box(x,.42,z,.9,.78,.58,0x92400e,0xf59e0b,.06);
+  box(x,.42,z+.315,.68,.42,.045,0x111827,0xf97316,.25);
+  box(x,.42,z+.345,.48,.26,.025,0x0ea5e9,0x38bdf8,.18);
+  box(x,.78,z+.325,.76,.12,.04,0x1f2937);
+  for(let i=0;i<4;i++) cyl(x-.27+i*.18,.81,z+.355,.035,.035,[0xfacc15,0xf97316,0xfacc15,0xf97316][i],Math.PI/2,0xffffff,.18);
+  for(const dx of[-.26,.26]) for(const dz of[-.18,.08]) cyl(x+dx,.86,z+dz,.12,.025,0x111827,0,0xf97316,.15);
+  box(x,.04,z+.02,.96,.08,.66,0x0f172a);
+  addGlow(x,.87,z+.25,0xf97316,.85,2.3);
+  tag3d('HORNO',x,1.02,z,'#f59e0b');
+}
+function buildMicrowave(x,z){
+  box(x,.72,z,.78,.42,.44,0xdb2777,0xf472b6,.08);
+  box(x-.11,.72,z+.245,.39,.25,.03,0x111827,0x38bdf8,.22);
+  box(x+.25,.75,z+.248,.12,.22,.028,0x0f172a);
+  for(let i=0;i<3;i++) box(x+.25,.82-i*.07,z+.27,.055,.025,.02,[0x22d3ee,0xfacc15,0xa3e635][i],0xffffff,.25);
+  box(x+.34,.72,z+.27,.035,.24,.025,0x020617);
+  addGlow(x,.91,z+.42,0xf472b6,.7,2);
+  tag3d('MICRO',x,1.02,z,'#f472b6');
+}
+function buildSofa(x,z){
+  box(x,.28,z,1.7,.38,.68,0xbe123c,0xfb7185,.05);
+  box(x,.58,z-.23,1.76,.54,.22,0xfb7185,0xfb7185,.08);
+  for(let i=0;i<3;i++) box(x-.55+i*.55,.52,z+.16,.48,.22,.38,[0xfb7185,0xf43f5e,0xff8fab][i],0xfb7185,.05);
+  for(const dx of[-.74,.74]) box(x+dx,.45,z,.18,.48,.68,0x9f1239);
+  for(const dx of[-.68,.68]) for(const dz of[-.25,.28]) box(x+dx,.07,z+dz,.08,.14,.08,0x111827);
+  addGlow(x,.72,z+.1,0xfb7185,.45,2.4);
+  tag3d('SOFA',x,.98,z,'#fb7185');
+}
+function buildCoffeeTable(x,z){
+  box(x,.34,z,.96,.08,.72,0xfacc15,0xfacc15,.08);
+  box(x,.39,z,.8,.035,.56,0xffffff,0x22d3ee,.18);
+  for(const dx of[-.38,.38]) for(const dz of[-.26,.26]) box(x+dx,.16,z+dz,.06,.32,.06,0x451a03);
+  cyl(x-.24,.48,z-.02,.08,.18,0x0f172a,0,0x22d3ee,.3);
+  cyl(x-.24,.58,z-.02,.11,.025,0x67e8f9,0,0x38bdf8,.25);
+  box(x+.18,.49,z+.04,.24,.04,.16,0x111827,0xa855f7,.28);
+  tag3d('MESA',x,.68,z,'#facc15');
+}
+function buildServerRack(x,z){
+  box(x,.72,z,.86,1.34,.58,0x0f172a,0x60a5fa,.04);
+  for(let i=0;i<7;i++){
+    const yy=.18+i*.16;
+    box(x,yy,z+.315,.72,.08,.035,0x1e293b);
+    box(x-.26,yy,z+.34,.05,.025,.018,i%2?0x22c55e:0x38bdf8,0xffffff,.35);
+    box(x+.18,yy,z+.34,.24,.018,.018,0x475569,0x60a5fa,.18);
+  }
+  for(const dx of[-.33,.33]) box(x+dx,.72,z+.34,.035,1.14,.035,0x94a3b8);
+  addGlow(x,.88,z+.54,0x60a5fa,1.1,2.8);
+  tag3d('RACK',x,1.52,z,'#60a5fa');
+}
+function buildTerminal(x,z){
+  box(x,.28,z,.92,.18,.52,0x111827,0xa78bfa,.08);
+  box(x-.24,.72,z+.08,.46,.42,.06,0x020617,0x38bdf8,.5);
+  box(x+.32,.68,z+.08,.42,.34,.06,0x020617,0xa855f7,.45);
+  box(x-.24,.72,z+.115,.35,.25,.02,0x0ea5e9,0x22d3ee,.5);
+  box(x+.32,.68,z+.115,.31,.2,.02,0x7c3aed,0xa855f7,.45);
+  box(x,.43,z+.2,.7,.05,.18,0x0f172a);
+  for(let row=0;row<3;row++) for(let col=0;col<9;col++) box(x-.29+col*.07,.47,z+.13+row*.04,.04,.012,.02,0x334155,0x22d3ee,.12);
+  addGlow(x,.83,z+.34,0xa78bfa,.9,2.4);
+  tag3d('TERMINAL',x,1.02,z,'#a78bfa');
+}
+function buildOllamaStation(x,z){
+  cyl(x,.34,z,.36,.56,0x0f766e,0,0x38bdf8,.12);
+  cyl(x,.66,z,.26,.1,0x38bdf8,0,0x38bdf8,.8);
+  for(let i=0;i<3;i++) cyl(x,.22+i*.16,z,.39,.025,[0x38bdf8,0xa7f3d0,0x22d3ee][i],0,0x38bdf8,.55);
+  box(x,.42,z+.42,.5,.18,.055,0x020617,0x38bdf8,.45);
+  for(let i=0;i<5;i++) box(x-.18+i*.09,.43,z+.455,.035,.035,.018,i%2?0xa7f3d0:0x38bdf8,0xffffff,.25);
+  const antenna=cyl(x+.23,.92,z+.03,.025,.42,0x67e8f9,0,0x38bdf8,.35);
+  cyl(x+.23,1.16,z+.03,.07,.08,0x38bdf8,0,0x38bdf8,.85);
+  addGlow(x,.9,z+.45,0x38bdf8,1.1,2.4);
+  tag3d('OLLAMA',x,1.16,z,'#38bdf8');
 }
 
 class AgentPet{
@@ -326,7 +462,7 @@ class AgentPet{
     }
 
     this.pos.addScaledVector(this.velocity,dt);
-    constrainToRoom(this);
+    if(this.phase==='wander') constrainToRoom(this);
     this.group.position.copy(this.pos);
     this.group.rotation.y=Math.atan2(this.velocity.x,this.velocity.z);
     const bob=Math.sin(performance.now()*.006+this.idx)*.06;
@@ -457,6 +593,21 @@ function updateInteractions(){
   }
 }
 
+function updateNav(){
+  navEl.innerHTML='';
+  if(!selectedRoom) return;
+  const btn0=document.createElement('button');
+  btn0.className='overview';btn0.textContent='⌂ Overview';
+  btn0.onclick=()=>setOverview();
+  navEl.appendChild(btn0);
+  roomLinks[selectedRoom].forEach(targetId=>{
+    const btn=document.createElement('button');
+    btn.textContent=`→ ${ROOM_LABELS[targetId]}`;
+    btn.onclick=()=>enterRoom(roomById[targetId]);
+    navEl.appendChild(btn);
+  });
+}
+
 function setOverview(){
   selectedRoom=null;
   cameraTarget.pos.set(
@@ -465,13 +616,15 @@ function setOverview(){
     camRadius*Math.sin(camPhi)*Math.cos(camTheta)
   );
   cameraTarget.look.set(0,0,0);
-  document.getElementById('mode').textContent='🖱 Arrastra para orbitar · rueda para zoom · click sala para entrar';
+  document.getElementById('mode').textContent='Arrastra para orbitar · rueda para zoom · click sala para entrar · [1-4] rooms';
+  updateNav();
 }
 function enterRoom(room){
   selectedRoom=room.id;
   cameraTarget.pos.set(room.x,3.25,room.z+3.35);
   cameraTarget.look.set(room.x,.35,room.z);
   document.getElementById('mode').textContent=`Dentro de ${room.name} · ESC para salir · click otra habitacion para moverte`;
+  updateNav();
 }
 let mouseDownPos=null;
 
@@ -501,13 +654,27 @@ function onClick(event){
   pointer.x=event.clientX/innerWidth*2-1;
   pointer.y=-(event.clientY/innerHeight)*2+1;
   raycaster.setFromCamera(pointer,camera);
-  const hit=raycaster.intersectObjects(clickableRooms,false)[0];
-  if(hit){
-    enterRoom(roomById[hit.object.userData.roomId]);
-  }else{
-    setOverview();
+  const hitRoom=raycaster.intersectObjects(clickableRooms,false)[0];
+  if(hitRoom){ enterRoom(roomById[hitRoom.object.userData.roomId]); return; }
+  const hitDoor=raycaster.intersectObjects(clickableDoors,false)[0];
+  if(hitDoor){
+    const{doorRoomA,doorRoomB}=hitDoor.object.userData;
+    const dest=(selectedRoom===doorRoomA)?doorRoomB:(selectedRoom===doorRoomB)?doorRoomA:doorRoomA;
+    enterRoom(roomById[dest]);
+    return;
   }
+  if(!selectedRoom) setOverview();
+  else setOverview();
 }
+navEl.addEventListener('click',e=>e.stopPropagation());
+addEventListener('click',onClick);
+addEventListener('keydown',e=>{
+  if(e.key==='Escape') setOverview();
+  if(e.key==='1') enterRoom(rooms[0]);
+  if(e.key==='2') enterRoom(rooms[1]);
+  if(e.key==='3') enterRoom(rooms[2]);
+  if(e.key==='4') enterRoom(rooms[3]);
+});
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);
@@ -519,10 +686,6 @@ addEventListener('wheel',e=>{
   camRadius=Math.max(4,Math.min(35,camRadius+e.deltaY*.015));
   setOverview();
 },{passive:false});
-addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&selectedRoom)setOverview();
-});
-
 function animate(){
   const dt=Math.min(.04,clock.getDelta());
   const list=[...agents.values()];
