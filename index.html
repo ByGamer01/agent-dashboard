@@ -27,6 +27,21 @@
     color:#fff;box-shadow:0 0 20px currentColor;text-shadow:0 0 8px rgba(255,255,255,.55);
     pointer-events:none
   }
+  #conn-status{
+    position:fixed;bottom:16px;right:18px;z-index:10;font-size:.55rem;
+    letter-spacing:.15em;pointer-events:none;transition:color .4s,opacity .4s
+  }
+  #conn-status.online{color:rgba(52,211,153,.7)}
+  #conn-status.offline{color:rgba(239,68,68,.5)}
+  #conn-status.reconnecting{color:rgba(251,191,36,.5)}
+  #offline-overlay{
+    position:fixed;top:0;left:0;width:100%;height:100%;z-index:100;
+    background:rgba(5,8,22,.85);display:flex;align-items:center;justify-content:center;
+    flex-direction:column;opacity:0;pointer-events:none;transition:opacity .6s ease
+  }
+  #offline-overlay.visible{opacity:1}
+  #offline-overlay .sym{font-size:3rem;color:rgba(239,68,68,.6);margin-bottom:12px}
+  #offline-overlay .msg{font-size:.7rem;color:rgba(239,68,68,.5);letter-spacing:.2em}
 </style>
 <script type="importmap">
 {
@@ -40,6 +55,8 @@
 <body>
 <div id="hud">Agent Habitat // Web3D</div>
 <div id="mode">Click room to enter · click outside to overview</div>
+<div id="conn-status" class="online">● ONLINE</div>
+<div id="offline-overlay"><div class="sym">⚠</div><div class="msg">CONNECTION LOST — RECONNECTING…</div></div>
 <script type="module">
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
@@ -435,12 +452,46 @@ function animate(){
 }
 
 function connect(){
+  setConnStatus('reconnecting');
   const ws=new WebSocket('ws://127.0.0.1:7788/ws');
+  let retryDelay=1000;
+
+  ws.onopen=()=>{
+    retryDelay=1000;
+    setConnStatus('online');
+  };
+
   ws.onmessage=e=>{
     const data=JSON.parse(e.data);
     for(const[id,state]of Object.entries(data)) syncAgents(id,state);
   };
-  ws.onclose=()=>setTimeout(connect,2000);
+
+  ws.onclose=()=>{
+    setConnStatus('reconnecting');
+    const delay=retryDelay;
+    retryDelay=Math.min(retryDelay*1.5,15000);
+    setTimeout(connect,delay);
+  };
+
+  ws.onerror=()=>{
+    ws.close();
+  };
+}
+
+function setConnStatus(mode){
+  const el=document.getElementById('conn-status');
+  const overlay=document.getElementById('offline-overlay');
+  el.className=mode;
+  if(mode==='online'){
+    el.textContent='● ONLINE';
+    overlay.classList.remove('visible');
+  }else if(mode==='reconnecting'){
+    el.textContent='◐ RECONNECTING…';
+    overlay.classList.add('visible');
+  }else{
+    el.textContent='○ OFFLINE';
+    overlay.classList.add('visible');
+  }
 }
 </script>
 </body>
