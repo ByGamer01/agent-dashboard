@@ -114,6 +114,9 @@ const roomLinks={
 
 let selectedRoom=null;
 const cameraTarget={pos:new THREE.Vector3(0,10,10),look:new THREE.Vector3(0,0,0)};
+// Orbit controls for overview mode
+let camTheta=0,camPhi=1.05,camRadius=12.8;
+let isOrbiting=false,orbitPrev={x:0,y:0};
 const agents=new Map();
 const interactionLines=[];
 
@@ -164,13 +167,23 @@ function buildHouse(){
   addWall(0,1.05,4.4,12.8,.28,.35,0x1e293b);
   addWall(-6.4,1.05,0,.28,.28,8.8,0x1e293b);
   addWall(6.4,1.05,0,.28,.28,8.8,0x1e293b);
-  addWall(0,1.05,0,.24,.28,8.8,0x334155);
-  addWall(0,1.05,0,12.8,.28,.24,0x334155);
+  // Cross walls with door gaps (wall segments instead of one solid block)
+  // x=0 wall (left↔right divider): segments with gap at kitchen↔lab door (z=-2.05)
+  // and lounge↔server door (z=2.05)
+  addWall(0,1.05,-3.55,.24,.28,1.7,0x334155); // front segment: z=-4.4 to -2.7
+  addWall(0,1.05,0,.24,.28,2.7,0x334155);     // center segment: z=-1.35 to 1.35
+  addWall(0,1.05,3.55,.24,.28,1.7,0x334155);  // back segment: z=2.7 to 4.4
+  // z=0 wall (front↔back divider): segments with gap at kitchen↔lounge door (x=-3.05)
+  // and lab↔server door (x=3.05)
+  addWall(-5.025,1.05,0,1.75,.28,.24,0x334155); // left segment: x=-6.4 to -3.65
+  addWall(0,1.05,0,4.7,.28,.24,0x334155);       // center segment: x=-2.35 to 2.35
+  addWall(5.025,1.05,0,1.75,.28,.24,0x334155);  // right segment: x=2.35 to 6.4
 
-  addDoorGlow(0,.15,-2.05,.18,1.25,0x22d3ee);
-  addDoorGlow(0,.15,2.05,.18,1.25,0x22d3ee);
-  addDoorGlow(-3.05,.15,0,1.25,.18,0xf97316);
-  addDoorGlow(3.05,.15,0,1.25,.18,0xf97316);
+  // Door arch glows at each gap
+  addDoorGlow(0,.15,-2.05,.18,.45,0x22d3ee);
+  addDoorGlow(0,.15,2.05,.18,.45,0x22d3ee);
+  addDoorGlow(-3.05,.15,0,.45,.18,0xf97316);
+  addDoorGlow(3.05,.15,0,.45,.18,0xf97316);
 
   const roof=new THREE.Mesh(
     new THREE.ConeGeometry(7.9,2.3,4),
@@ -233,6 +246,7 @@ class AgentPet{
     this.messageTimer=2+Math.random()*4;
     this.group=buildPet(cfg.kind,cfg.color,cfg.shade);
     this.group.position.copy(this.pos);
+    this.group.scale.setScalar(1.5);
     scene.add(this.group);
     this.nameLabel=makeTextLabel(this.name.toUpperCase(),'label',`#${cfg.color.toString(16).padStart(6,'0')}`);
     this.nameLabel.position.set(0,.92,0);this.group.add(this.nameLabel);
@@ -275,7 +289,7 @@ class AgentPet{
       if(this.phase==='toDoor'){
         this.room=this.targetRoom;
         this.phase='fromDoor';
-        this.pos.copy(doorPoint(this.room,oppositeRoom(this.room)));
+        this.pos.copy(enterPoint(oppositeRoom(this.room),this.room));
         this.target=randomPointInRoom(this.room);
       }else this.pickTarget();
     }
@@ -288,8 +302,8 @@ class AgentPet{
       if(other===this||other.room!==this.room) continue;
       const away=this.pos.clone().sub(other.pos);
       const d=away.length();
-      if(d>0&&d<.65) this.velocity.add(away.normalize().multiplyScalar((.65-d)*1.4));
-      if(d>.65&&d<1.55&&this.status!=='idle'){
+      if(d>0&&d<.9) this.velocity.add(away.normalize().multiplyScalar((.9-d)*1.8));
+      if(d>.9&&d<2.2&&this.status!=='idle'){
         this.message=`${other.name.split(' ')[0]}, tengo datos`;
         this.setBubble(this.message);
       }
@@ -355,26 +369,40 @@ function makeTextLabel(text,cls,color){
 function randomPointInRoom(roomId){
   const r=roomById[roomId];
   return new THREE.Vector3(
-    r.x+(Math.random()-.5)*(r.w-1.1),
+    r.x+(Math.random()-.5)*(r.w-1.6),
     .22,
-    r.z+(Math.random()-.5)*(r.d-1.1)
+    r.z+(Math.random()-.5)*(r.d-1.6)
   );
 }
 function constrainToRoom(agent){
-  const r=roomById[agent.room],pad=.42;
+  const r=roomById[agent.room],pad=agent.phase==='toDoor'?.06:.42;
   agent.pos.x=THREE.MathUtils.clamp(agent.pos.x,r.x-r.w*.5+pad,r.x+r.w*.5-pad);
   agent.pos.z=THREE.MathUtils.clamp(agent.pos.z,r.z-r.d*.5+pad,r.z+r.d*.5-pad);
 }
 function doorPoint(from,to){
-  const a=roomById[from],b=roomById[to]||a;
-  return new THREE.Vector3((a.x+b.x)/2,.22,(a.z+b.z)/2);
+  const a=roomById[from],b=roomById[to]||a,pad=.52;
+  let x,z;
+  if(a.x<b.x){x=a.x+a.w*.5-pad;z=(a.z+b.z)/2;}
+  else if(a.x>b.x){x=a.x-a.w*.5+pad;z=(a.z+b.z)/2;}
+  else if(a.z<b.z){x=(a.x+b.x)/2;z=a.z+a.d*.5-pad;}
+  else{x=(a.x+b.x)/2;z=a.z-a.d*.5+pad;}
+  return new THREE.Vector3(x,.22,z);
+}
+function enterPoint(from,to){
+  const a=roomById[from],b=roomById[to],pad=.5;
+  let x,z;
+  if(a.x<b.x){x=b.x-b.w*.5+pad;z=(a.z+b.z)/2;}
+  else if(a.x>b.x){x=b.x+b.w*.5-pad;z=(a.z+b.z)/2;}
+  else if(a.z<b.z){x=(a.x+b.x)/2;z=b.z-b.d*.5+pad;}
+  else{x=(a.x+b.x)/2;z=b.z+b.d*.5-pad;}
+  return new THREE.Vector3(x,.22,z);
 }
 function oppositeRoom(roomId){
   return roomLinks[roomId]?.[0]||roomId;
 }
 
 function syncAgents(agentId,state){
-  const needed=state.instances||1;
+  const needed=state.instances??1;
   const existing=[...agents.values()].filter(a=>a.agentId===agentId);
   for(let i=existing.length;i<needed;i++){
     const pet=new AgentPet(`${agentId}:${i}`,agentId,i);
@@ -389,7 +417,7 @@ function syncAgents(agentId,state){
     if(pet) pet.setStatus(state.status,i===0?state.last_line:'');
   }
 }
-Object.keys(CONFIGS).forEach(id=>syncAgents(id,{status:'idle',last_line:'',instances:1}));
+Object.keys(CONFIGS).forEach(id=>syncAgents(id,{status:'idle',last_line:'',instances:0}));
 
 function updateInteractions(){
   interactionLines.forEach(l=>scene.remove(l));
@@ -397,7 +425,7 @@ function updateInteractions(){
   const list=[...agents.values()];
   for(let i=0;i<list.length;i++) for(let j=i+1;j<list.length;j++){
     const a=list[i],b=list[j];
-    if(a.room!==b.room||a.pos.distanceTo(b.pos)>1.65) continue;
+    if(a.room!==b.room||a.pos.distanceTo(b.pos)>2.4) continue;
     const mat=new THREE.LineBasicMaterial({color:a.cfg.color,transparent:true,opacity:.65});
     const points=[a.pos.clone().add(new THREE.Vector3(0,.7,0)),b.pos.clone().add(new THREE.Vector3(0,.7,0))];
     const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),mat);
@@ -407,9 +435,13 @@ function updateInteractions(){
 
 function setOverview(){
   selectedRoom=null;
-  cameraTarget.pos.set(0,8.8,9.8);
+  cameraTarget.pos.set(
+    camRadius*Math.sin(camPhi)*Math.sin(camTheta),
+    camRadius*Math.cos(camPhi),
+    camRadius*Math.sin(camPhi)*Math.cos(camTheta)
+  );
   cameraTarget.look.set(0,0,0);
-  document.getElementById('mode').textContent='Click room to enter · click outside to overview';
+  document.getElementById('mode').textContent='Arrastra para orbitar · click sala para entrar';
 }
 function enterRoom(room){
   selectedRoom=room.id;
@@ -417,6 +449,30 @@ function enterRoom(room){
   cameraTarget.look.set(room.x,.35,room.z);
   document.getElementById('mode').textContent=`Dentro de ${room.name} · click otra habitacion para moverte`;
 }
+let mouseDownPos=null;
+
+addEventListener('pointerdown',e=>{
+  orbitPrev={x:e.clientX,y:e.clientY};
+  mouseDownPos={x:e.clientX,y:e.clientY};
+});
+addEventListener('pointermove',e=>{
+  if(e.buttons!==1)return;
+  const dx=e.clientX-orbitPrev.x,dy=e.clientY-orbitPrev.y;
+  orbitPrev={x:e.clientX,y:e.clientY};
+  if(selectedRoom)return; // don't orbit inside a room
+  isOrbiting=true;
+  camTheta-=dx*.008;
+  camPhi=Math.max(.3,Math.min(Math.PI*.85,camPhi+dy*.008));
+  setOverview();
+});
+addEventListener('pointerup',e=>{
+  if(!isOrbiting&&mouseDownPos){
+    const dist=Math.hypot(e.clientX-mouseDownPos.x,e.clientY-mouseDownPos.y);
+    if(dist<6)onClick(e);
+  }
+  isOrbiting=false;
+  mouseDownPos=null;
+});
 function onClick(event){
   pointer.x=event.clientX/innerWidth*2-1;
   pointer.y=-(event.clientY/innerHeight)*2+1;
@@ -428,7 +484,6 @@ function onClick(event){
     setOverview();
   }
 }
-addEventListener('click',onClick);
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);
