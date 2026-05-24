@@ -5,7 +5,7 @@
 <title>Agent Control Room</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
-  body{background:#020208;overflow:hidden;font-family:'Courier New',monospace}
+  body{background:#07071a;overflow:hidden;font-family:'Courier New',monospace}
   canvas{display:block}
   #hud{position:fixed;top:14px;left:50%;transform:translateX(-50%);
     font-size:.6rem;color:#1a1a40;letter-spacing:.4em;pointer-events:none}
@@ -47,43 +47,43 @@ function drawRoom() {
 
   // Ceiling
   const cg = cx.createLinearGradient(0,0,0,ft);
-  cg.addColorStop(0,'#020208'); cg.addColorStop(1,'#060618');
+  cg.addColorStop(0,'#07071a'); cg.addColorStop(1,'#0e0e35');
   cx.fillStyle = cg; cx.fillRect(0,0,W,ft);
 
   // Ceiling lights (strips converging to VP)
   for (let i = -3; i <= 3; i++) {
     const xBot = vp.x + i * W * 0.14;
     const grad = cx.createLinearGradient(vp.x, ft-40, xBot, 0);
-    grad.addColorStop(0,'rgba(80,80,220,0.18)');
-    grad.addColorStop(1,'rgba(80,80,220,0)');
-    cx.strokeStyle = grad; cx.lineWidth = i===0?2:1;
+    grad.addColorStop(0,'rgba(100,80,255,0.45)');
+    grad.addColorStop(1,'rgba(100,80,255,0)');
+    cx.strokeStyle = grad; cx.lineWidth = i===0?2.5:1.2;
     cx.beginPath(); cx.moveTo(vp.x, ft); cx.lineTo(xBot,0); cx.stroke();
   }
 
   // Back wall
   const bwg = cx.createLinearGradient(0,ft-90,0,ft+10);
-  bwg.addColorStop(0,'#04040e'); bwg.addColorStop(1,'#08081e');
+  bwg.addColorStop(0,'#0a0a22'); bwg.addColorStop(1,'#12123a');
   cx.fillStyle = bwg; cx.fillRect(0,ft-90,W,100);
 
   // Back wall — glowing base strip
-  const bsg = cx.createLinearGradient(0,ft-4,0,ft+4);
-  bsg.addColorStop(0,'rgba(60,60,200,0.5)'); bsg.addColorStop(1,'transparent');
-  cx.fillStyle = bsg; cx.fillRect(0,ft-2,W,6);
+  const bsg = cx.createLinearGradient(0,ft-5,0,ft+5);
+  bsg.addColorStop(0,'rgba(100,80,255,0.9)'); bsg.addColorStop(1,'transparent');
+  cx.fillStyle = bsg; cx.fillRect(0,ft-3,W,8);
 
   // Back wall windows
   drawWindows(ft);
 
   // Left wall
-  cx.fillStyle = '#030310';
+  cx.fillStyle = '#080820';
   cx.beginPath(); cx.moveTo(0,0); cx.lineTo(vp.x*0.04, ft); cx.lineTo(wl, fb); cx.lineTo(0,H); cx.closePath(); cx.fill();
   // Left wall edge line
-  cx.strokeStyle='rgba(40,40,140,0.4)'; cx.lineWidth=1.5;
+  cx.strokeStyle='rgba(100,80,255,0.6)'; cx.lineWidth=2;
   cx.beginPath(); cx.moveTo(vp.x*0.04, ft); cx.lineTo(wl, fb); cx.stroke();
 
   // Right wall
-  cx.fillStyle = '#030310';
+  cx.fillStyle = '#080820';
   cx.beginPath(); cx.moveTo(W,0); cx.lineTo(W-vp.x*0.04, ft); cx.lineTo(wr, fb); cx.lineTo(W,H); cx.closePath(); cx.fill();
-  cx.strokeStyle='rgba(40,40,140,0.4)'; cx.lineWidth=1.5;
+  cx.strokeStyle='rgba(100,80,255,0.6)'; cx.lineWidth=2;
   cx.beginPath(); cx.moveTo(W-vp.x*0.04, ft); cx.lineTo(wr, fb); cx.stroke();
 
   // Floor
@@ -124,7 +124,7 @@ function drawWindows(ft) {
 function drawFloor(vp, ft, fb, wl, wr) {
   // Floor base
   const fg = cx.createLinearGradient(0,ft,0,H);
-  fg.addColorStop(0,'#05051a'); fg.addColorStop(0.6,'#080820'); fg.addColorStop(1,'#0a0a22');
+  fg.addColorStop(0,'#0c0c2e'); fg.addColorStop(0.6,'#0f0f38'); fg.addColorStop(1,'#12123a');
   cx.fillStyle = fg;
   cx.beginPath(); cx.moveTo(0,ft); cx.lineTo(W,ft); cx.lineTo(W,H); cx.lineTo(0,H); cx.fill();
 
@@ -139,7 +139,7 @@ function drawFloor(vp, ft, fb, wl, wr) {
     const t2 = i/nv;
     const xBot = wl + (wr-wl)*t2;
     const edgeFade = 1 - Math.abs(t2-0.5)*2;
-    cx.strokeStyle = `rgba(35,35,110,${0.05+0.12*edgeFade})`;
+    cx.strokeStyle = `rgba(80,60,220,${0.12+0.25*edgeFade})`;
     cx.lineWidth = 0.6;
     cx.beginPath(); cx.moveTo(vp.x, ft); cx.lineTo(xBot, fb); cx.stroke();
   }
@@ -151,7 +151,7 @@ function drawFloor(vp, ft, fb, wl, wr) {
     const y = ft + (fb-ft)*t2sq;
     const hw = (wr-wl)*0.5*t2sq;
     const alpha = 0.05 + 0.18*t2;
-    cx.strokeStyle = `rgba(35,35,110,${alpha})`;
+    cx.strokeStyle = `rgba(80,60,220,${alpha*1.8})`;
     cx.lineWidth = 0.5 + t2;
     cx.beginPath(); cx.moveTo(vp.x-hw, y); cx.lineTo(vp.x+hw, y); cx.stroke();
   }
@@ -579,7 +579,7 @@ Object.keys(CONFIGS).forEach(id => syncRobots(id, {status:'idle',last_line:'',in
 
 // ─── Main loop ────────────────────────────────────────────────────────────────
 function loop() {
-  cx.fillStyle='#020208'; cx.fillRect(0,0,W,H);
+  cx.fillStyle='#07071a'; cx.fillRect(0,0,W,H);
   drawRoom();
 
   const bots = [...robotPool.values()];
