@@ -5,6 +5,7 @@ import platform
 import re
 import subprocess
 import time
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -126,6 +127,22 @@ def count_instances(pattern_config: dict) -> int:
             else:
                 background_count += 1
         return len(terminal_ttys) if rules.get("require_tty") else background_count
+    except Exception:
+        return 0
+
+
+def count_ollama_instances() -> int:
+    """Count Ollama only when it has active/running models.
+
+    The Ollama desktop/background service can stay alive with no model doing
+    work. In the habitat that should not show as an active creature.
+    """
+    try:
+        request = urllib.request.Request("http://127.0.0.1:11434/api/ps")
+        with urllib.request.urlopen(request, timeout=0.35) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        models = data.get("models", [])
+        return len(models) if isinstance(models, list) else 0
     except Exception:
         return 0
 
@@ -274,9 +291,13 @@ async def poll_instances():
     while not shutdown_event.is_set():
         changed = False
         for name, pattern in PROCESS_PATTERNS.items():
-            instances = count_instances(pattern)
+            instances = count_ollama_instances() if name == "ollama" else count_instances(pattern)
             if instances != agent_states[name]["instances"]:
                 agent_states[name]["instances"] = instances
+                if instances == 0:
+                    agent_states[name]["status"] = "idle"
+                    agent_states[name]["last_line"] = ""
+                    agent_states[name]["activity"] = 0
                 changed = True
         if changed:
             await broadcast()

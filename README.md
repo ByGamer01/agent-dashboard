@@ -38,7 +38,7 @@ El proyecto esta pensado para correr en local, en la maquina del usuario, sin ba
 - Deteccion de multiples instancias por agente inspeccionando procesos locales con `ps aux`.
 - Lectura de logs locales para inferir actividad.
 - Transiciones automaticas entre estados `working`, `thinking` e `idle`.
-- Script `widget.sh` para abrir el dashboard como ventana tipo app en Google Chrome.
+- Scripts `widget.sh` y `widget.ps1` para abrir el dashboard como ventana tipo app/widget con Chrome, Chromium o Edge.
 - Sin base de datos, sin build step y sin dependencias frontend.
 
 ## Vista general
@@ -47,7 +47,8 @@ El dashboard esta formado por tres piezas:
 
 1. `server.py`: servidor Python que expone la pagina web y un WebSocket.
 2. `index.html`: experiencia visual animada con Canvas y JavaScript puro.
-3. `widget.sh`: helper para macOS que arranca el servidor si hace falta y abre Chrome en modo app.
+3. `widget.sh`: helper para macOS/Linux que arranca el servidor si hace falta y abre Chrome/Chromium/Edge en modo app.
+4. `widget.ps1`: helper para Windows que hace lo mismo con Chrome o Edge.
 
 Flujo simplificado:
 
@@ -74,7 +75,8 @@ index.html
 agent-dashboard/
 ├── index.html   # Interfaz visual, animaciones y cliente WebSocket
 ├── server.py    # Backend FastAPI y monitor de agentes
-└── widget.sh    # Lanzador macOS para abrir el dashboard como app
+├── widget.sh    # Lanzador macOS/Linux para abrir el dashboard como app
+└── widget.ps1   # Lanzador Windows para abrir el dashboard como app
 ```
 
 El repositorio no incluye por ahora:
@@ -91,13 +93,12 @@ Todo el frontend vive dentro de `index.html`, y todo el backend vive dentro de `
 
 ### Sistema
 
-El proyecto esta orientado a macOS, especialmente por el script `widget.sh`, que usa:
+El servidor es multiplataforma. Los lanzadores incluidos cubren:
 
-- `lsof`
-- `open`
-- Google Chrome
+- macOS/Linux: `widget.sh`
+- Windows: `widget.ps1`
 
-El servidor en si puede ejecutarse en otros sistemas si Python y las dependencias estan disponibles, pero el script de apertura como ventana flotante esta escrito para macOS.
+Para que la ventana se vea lo mas parecida posible en todos los sistemas, los lanzadores priorizan navegadores Chromium en modo app: Google Chrome, Chromium o Microsoft Edge. No se puede garantizar igualdad pixel-perfect entre macOS, Linux y Windows porque intervienen WebGL, drivers GPU, escalado de pantalla y renderizado de fuentes, pero el dashboard usa los mismos assets locales y la misma ventana app.
 
 ### Python
 
@@ -112,7 +113,7 @@ uvicorn
 
 ### Navegador
 
-Para usar `widget.sh` necesitas Google Chrome instalado. Tambien puedes abrir manualmente el dashboard en cualquier navegador moderno entrando a:
+Para usar el modo widget necesitas Chrome, Chromium o Edge. Tambien puedes abrir manualmente el dashboard en cualquier navegador moderno entrando a:
 
 ```text
 http://127.0.0.1:7788
@@ -162,19 +163,28 @@ El servidor escucha en:
 127.0.0.1:7788
 ```
 
-### Opcion 2: abrir como widget/app de Chrome
+### Opcion 2: abrir como widget/app
+
+macOS/Linux:
 
 ```bash
 cd /Users/david/agent-dashboard
 ./widget.sh
 ```
 
-Este script:
+Windows PowerShell:
+
+```powershell
+cd C:\ruta\a\agent-dashboard
+.\widget.ps1
+```
+
+Estos scripts:
 
 1. Comprueba si ya hay algo escuchando en el puerto `7788`.
 2. Si no hay servidor, ejecuta `python3 server.py` en segundo plano.
 3. Espera brevemente.
-4. Abre Google Chrome en modo app apuntando a `http://127.0.0.1:7788`.
+4. Abre Chrome, Chromium o Edge en modo app apuntando a `http://127.0.0.1:7788`.
 
 El resultado es una ventana sin barra de navegador, redimensionable y movible como si fuese una app nativa.
 
@@ -470,7 +480,7 @@ El payload enviado por el servidor tiene esta forma:
 
 ## Script de ventana flotante
 
-`widget.sh` automatiza el uso en macOS:
+`widget.sh` automatiza el uso en macOS y Linux:
 
 ```bash
 ./widget.sh
@@ -478,14 +488,17 @@ El payload enviado por el servidor tiene esta forma:
 
 Contenido funcional:
 
-- usa `lsof -ti:7788` para saber si el puerto esta ocupado;
+- usa `lsof -ti:$DASHBOARD_PORT` para saber si el puerto esta ocupado;
 - si el puerto esta libre, arranca `python3 server.py`;
-- usa `open -na "Google Chrome" --args --app=...` para abrir Chrome sin barra de navegador;
+- en macOS usa `open -na` con Chrome, Edge o Chromium;
+- en Linux usa `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser` o `microsoft-edge`;
+- abre el dashboard con `--app=...` para que parezca una ventana nativa sin barra de navegador;
 - define tamano inicial de ventana `1200x750`;
 - define posicion inicial `80,80`;
-- deshabilita extensiones para esa ventana.
+- deshabilita extensiones para esa ventana;
+- usa un perfil temporal dedicado para evitar diferencias por extensiones o configuraciones del navegador.
 
-Si no tienes Google Chrome instalado, puedes ejecutar el servidor manualmente y abrir la URL en otro navegador.
+`widget.ps1` hace lo equivalente en Windows, priorizando Chrome y luego Edge. Si no hay navegador Chromium disponible, abre la URL con el navegador predeterminado.
 
 ## Configuracion
 
@@ -507,7 +520,7 @@ En `index.html`:
 const ws = new WebSocket('ws://127.0.0.1:7788/ws');
 ```
 
-Y si usas `widget.sh`, tambien:
+Y si usas `widget.sh` o `widget.ps1`, tambien:
 
 ```bash
 lsof -ti:7788
@@ -699,15 +712,23 @@ ps aux
 
 Despues filtra las lineas que contienen el patron configurado en `PROCESS_PATTERNS` y solo cuenta procesos asociados a una TTY que empiece por `s`. Si el contador parece incorrecto, ajusta `PROCESS_PATTERNS` para que el patron coincida con el binario real que quieres contar.
 
-### `widget.sh` no abre Chrome
+### El widget no abre Chrome/Edge
 
-Comprueba que Google Chrome existe con ese nombre de app:
+En macOS, comprueba que Google Chrome, Microsoft Edge o Chromium existen como app instalada. Por ejemplo:
 
 ```bash
 open -na "Google Chrome"
 ```
 
-Si usas otro navegador, ejecuta `python3 server.py` y abre manualmente:
+En Linux, comprueba que existe alguno de estos comandos:
+
+```bash
+command -v google-chrome
+command -v chromium
+command -v microsoft-edge
+```
+
+En Windows, `widget.ps1` busca Chrome y Edge en las rutas habituales. Si usas otro navegador, ejecuta `python3 server.py` y abre manualmente:
 
 ```text
 http://127.0.0.1:7788
@@ -775,7 +796,7 @@ No cambies el host a `0.0.0.0` salvo que entiendas el riesgo. Si se expone en re
 - Los logs de Hermes y Codex se leen solo si el archivo existe al arrancar la tarea.
 - La deteccion de instancias mediante busqueda textual sobre `ps aux` o `tasklist` puede producir falsos positivos si los patrones son demasiado amplios.
 - Claude depende del formato actual de los archivos JSONL en `~/.claude/projects`.
-- `widget.sh` esta orientado a macOS y `widget.ps1` cubre Windows con Chrome o navegador predeterminado.
+- `widget.sh` cubre macOS/Linux y `widget.ps1` cubre Windows, pero la igualdad visual absoluta depende del motor Chromium, GPU, drivers y escalado del sistema.
 
 ## Roadmap sugerido
 
