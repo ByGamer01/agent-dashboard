@@ -1,70 +1,161 @@
 import asyncio
 import json
 import os
+import platform
 import re
 import subprocess
 import time
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
+
 PORT = int(os.environ.get("DASHBOARD_PORT", "7788"))
+HOME = Path.home()
+LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", HOME))
+
+
+def first_existing(*paths: Path):
+    for path in paths:
+        if path and path.exists():
+            return path
+    return paths[0] if paths else None
+
 
 LOG_SOURCES = {
-    "hermes": Path.home() / ".hermes/logs/agent.log",
-    "codex":  Path.home() / ".codex/log/codex-tui.log",
+    "hermes": HOME / ".hermes/logs/agent.log",
+    "claude": HOME / ".claude/projects",
+    "codex": HOME / ".codex/log/codex-tui.log",
+    "ollama": first_existing(
+        HOME / "Library/Logs/Ollama/server.log",
+        HOME / ".ollama/logs/server.log",
+        LOCALAPPDATA / "Ollama/server.log",
+    ),
 }
 
-# Match only foreground terminal sessions, not subprocesses/background daemons.
-# Use the process binary name — works across Linux and macOS via ps aux.
 PROCESS_PATTERNS = {
-    "hermes": "hermes",
-    "claude": "claude",
-    "codex":  "codex",
+    "hermes": {
+        "posix": {"commands": ["hermes"], "contains": ["venv/bin/hermes"], "require_tty": True},
+        "windows": {"commands": ["hermes.exe", "hermes"]},
+    },
+    "claude": {
+        "posix": {"commands": ["claude"], "contains": ["opt/homebrew/bin/claude"], "require_tty": True},
+        "windows": {"commands": ["claude.exe", "claude"]},
+    },
+    "codex": {
+        "posix": {"commands": ["codex"], "contains": ["local/bin/codex"], "require_tty": True},
+        "windows": {"commands": ["codex.exe", "codex"]},
+    },
+    "ollama": {
+        "posix": {"commands": ["ollama"], "contains": ["Ollama.app", "ollama serve"], "require_tty": False},
+        "windows": {"commands": ["ollama.exe", "ollama"]},
+    },
 }
 
 agent_states = {
     "hermes": {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
     "claude": {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
-    "codex":  {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
+    "codex": {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
+    "ollama": {"status": "idle", "last_line": "", "activity": 0, "instances": 0},
 }
 
 clients: set = set()
 shutdown_event = asyncio.Event()
 
 
-def count_instances(cmd_pattern: str) -> int:
-    """Count unique terminal sessions running the given process.
-    Counts each unique TTY once, so multiple processes spawned by the
-    same session (e.g. hermes's python + node + gateway) count as 1."""
+def active_rules(pattern_config: dict) -> dict:
+    key = "windows" if platform.system().lower().startswith("win") else "posix"
+    return pattern_config.get(key, {})
+
+
+def matches_process(command: str, args: str, rules: dict) -> bool:
+    command_name = Path(command).name.lower()
+    commands = [c.lower() for c in rules.get("commands", [])]
+    contains = [c.lower() for c in rules.get("contains", [])]
+    haystack = f"{command} {args}".lower()
+    return command_name in commands or any(fragment in haystack for fragment in contains)
+
+
+def count_instances(pattern_config: dict) -> int:
+    """Count agent processes on macOS/Linux and Windows.
+
+    Terminal agents require a real TTY on POSIX so desktop apps such as Claude
+    Desktop and helper processes are not counted as Claude Code sessions.
+    """
+    rules = active_rules(pattern_config)
+    if not rules:
+        return 0
     try:
-        result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
-        ttys = set()
+        if platform.system().lower().startswith("win"):
+            result = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                shell=False,
+            )
+            commands = [c.lower() for c in rules.get("commands", [])]
+            count = 0
+            for line in result.stdout.splitlines():
+                image_name = line.split(",", 1)[0].strip().strip('"').lower()
+                if image_name in commands:
+                    count += 1
+            return count
+
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,tty=,comm=,args="],
+            capture_output=True,
+            text=True,
+        )
+        terminal_ttys = set()
+        background_count = 0
         for line in result.stdout.splitlines():
-            if cmd_pattern not in line:
+            parts = line.split(None, 3)
+            if len(parts) < 4:
                 continue
-            parts = line.split()
-            if len(parts) < 7:
+            _pid, tty, command, args = parts
+            if rules.get("require_tty") and tty == "??":
                 continue
-            tty = parts[6]  # TTY column
-            if tty and tty[0] != "?":  # attached to a terminal
-                ttys.add(tty)
-        return len(ttys)
+            if not matches_process(command, args, rules):
+                continue
+            if rules.get("require_tty"):
+                terminal_ttys.add(tty)
+            else:
+                background_count += 1
+        return len(terminal_ttys) if rules.get("require_tty") else background_count
+    except Exception:
+        return 0
+
+
+def count_ollama_instances() -> int:
+    """Count Ollama only when it has active/running models.
+
+    The Ollama desktop/background service can stay alive with no model doing
+    work. In the habitat that should not show as an active creature.
+    """
+    try:
+        request = urllib.request.Request("http://127.0.0.1:11434/api/ps")
+        with urllib.request.urlopen(request, timeout=0.35) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        models = data.get("models", [])
+        return len(models) if isinstance(models, list) else 0
     except Exception:
         return 0
 
 
 def get_latest_claude_line() -> str:
     try:
-        projects_dir = Path.home() / ".claude/projects"
+        projects_dir = HOME / ".claude/projects"
         if not projects_dir.exists():
             return ""
         files = sorted(
             projects_dir.rglob("*.jsonl"),
-            key=lambda f: f.stat().st_mtime, reverse=True,
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
         )
         if not files:
             return ""
@@ -73,13 +164,13 @@ def get_latest_claude_line() -> str:
                 data = json.loads(raw)
                 msg = data.get("message", {})
                 if msg.get("role") == "assistant":
-                    c = msg.get("content", "")
-                    if isinstance(c, list):
-                        for b in c:
-                            if isinstance(b, dict) and b.get("type") == "text":
-                                return b["text"][:120]
-                    elif isinstance(c, str):
-                        return c[:120]
+                    content = msg.get("content", "")
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                return block["text"][:120]
+                    elif isinstance(content, str):
+                        return content[:120]
             except Exception:
                 continue
     except Exception:
@@ -87,59 +178,50 @@ def get_latest_claude_line() -> str:
     return ""
 
 
-# ─── Log line filter: extract human-readable status from raw agent logs ─────
-# Returns (text, is_user_activity).
-# is_user_activity=True  → bot goes to workstation (user asked something)
-# is_user_activity=False → just updates the speech bubble (passive status)
-
-def extract_human_readable(line: str) -> tuple[str | None, bool]:
-    """Extract a human-readable status from a raw agent log line.
-    Returns (None, False) for internal/debug noise.
-    Returns (text, True) for user-facing activity (conversation turns, errors).
-    Returns (text, False) for passive updates (tool completions, status).
-    """
+def extract_human_readable(line: str):
     text = line.strip()
     if not text:
         return (None, False)
 
-    # 1. conversation turn → user activity! Shows what the user asked
-    m = re.search(r"msg='([^']+)'", text)
-    if not m:
-        m = re.search(r'msg="([^"]+)"', text)
-    if m:
-        msg = m.group(1)
+    match = re.search(r"msg='([^']+)'", text) or re.search(r'msg="([^"]+)"', text)
+    if match:
+        msg = match.group(1)
         if len(msg) > 80:
             msg = msg[:77] + "..."
-        return (f"📩 {msg}", True)
+        return (f"MSG {msg}", True)
 
-    # 2. Turn ended → passive status update
-    m = re.search(r"Turn ended: reason=(\w+)", text)
-    if m:
-        reason = m.group(1)
+    match = re.search(r"Turn ended: reason=(\w+)", text)
+    if match:
         labels = {
-            "text_response": "✅ Response sent",
-            "tool_call":    "🔧 Ran tool",
-            "error":        "⚠️ Agent error",
-            "max_turns":    "⏱ Turn limit reached",
-            "interrupted":  "⏸ Interrupted",
+            "text_response": "Response sent",
+            "tool_call": "Ran tool",
+            "error": "Agent error",
+            "max_turns": "Turn limit reached",
+            "interrupted": "Interrupted",
         }
-        return (labels.get(reason, f"✅ {reason}"), False)
+        reason = match.group(1)
+        return (labels.get(reason, reason), False)
 
-    # 3. Tool execution — PASSIVE, don't trigger working
-    # Only show file/tool operations, skip internal plumbing
-    m = re.search(r"tool_executor: tool (\w+) completed", text)
-    if m:
-        tool_name = m.group(1)
-        # Skip internal/housekeeping tools — not user-facing
-        if tool_name in ("skills_list", "skill_view", "memory", "session_search",
-                         "hindsight_recall", "hindsight_retain", "hindsight_reflect",
-                         "todo", "process", "send_message"):
+    match = re.search(r"tool_executor: tool (\w+) completed", text)
+    if match:
+        tool_name = match.group(1)
+        if tool_name in (
+            "skills_list",
+            "skill_view",
+            "memory",
+            "session_search",
+            "hindsight_recall",
+            "hindsight_retain",
+            "hindsight_reflect",
+            "todo",
+            "process",
+            "send_message",
+        ):
             return (None, False)
         if len(tool_name) > 16:
             return (None, False)
-        return (f"🔧 Ran {tool_name}", False)
+        return (f"Ran {tool_name}", False)
 
-    # 4. Error lines — user-facing, but only if there's actual error content
     if " ERROR " in text or " CRITICAL " in text:
         parts = text.split(" ERROR ", 1)
         if len(parts) < 2:
@@ -148,24 +230,26 @@ def extract_human_readable(line: str) -> tuple[str | None, bool]:
             err = parts[1].strip()
             if len(err) > 80:
                 err = err[:77] + "..."
-            return (f"❌ {err}", True)
+            return (err, True)
 
-    # 5. Key lifecycle events — passive
-    if "agent initialized" in text.lower():
-        return ("🚀 Agent started", True)
-    if "shutting down" in text.lower() or "shutdown" in text.lower():
-        return ("🛑 Shutting down", True)
+    lowered = text.lower()
+    if "agent initialized" in lowered:
+        return ("Agent started", True)
+    if "shutting down" in lowered or "shutdown" in lowered:
+        return ("Shutting down", True)
 
-    # Everything else is internal noise → skip
+    # Ollama logs are mostly plain server events; keep short useful lines.
+    if "ollama" in lowered or "model" in lowered or "loaded" in lowered:
+        return (text[-120:], False)
+
     return (None, False)
 
 
 async def tail_log(path: Path, name: str):
-    """Tail an agent log file — user conversations trigger 'working', tools don't."""
     if not path or not path.exists():
         return
-    with open(path) as f:
-        f.seek(0, 2)  # start at end
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        f.seek(0, 2)
         while not shutdown_event.is_set():
             line = f.readline()
             if line:
@@ -185,20 +269,18 @@ async def tail_log(path: Path, name: str):
 
 async def poll_claude():
     while not shutdown_event.is_set():
-        if count_instances("claude") > 0:
+        if count_instances(PROCESS_PATTERNS["claude"]) > 0:
             line = get_latest_claude_line()
             if line and line != agent_states["claude"]["last_line"]:
                 agent_states["claude"]["last_line"] = line
                 agent_states["claude"]["status"] = "working"
                 agent_states["claude"]["activity"] = time.time()
                 await broadcast()
-        else:
-            # Clear stale data when claude isn't running
-            if agent_states["claude"]["last_line"]:
-                agent_states["claude"]["last_line"] = ""
-                agent_states["claude"]["status"] = "idle"
-                agent_states["claude"]["activity"] = 0
-                await broadcast()
+        elif agent_states["claude"]["last_line"]:
+            agent_states["claude"]["last_line"] = ""
+            agent_states["claude"]["status"] = "idle"
+            agent_states["claude"]["activity"] = 0
+            await broadcast()
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=1)
         except asyncio.TimeoutError:
@@ -209,9 +291,13 @@ async def poll_instances():
     while not shutdown_event.is_set():
         changed = False
         for name, pattern in PROCESS_PATTERNS.items():
-            n = count_instances(pattern)
-            if n != agent_states[name]["instances"]:
-                agent_states[name]["instances"] = n
+            instances = count_ollama_instances() if name == "ollama" else count_instances(pattern)
+            if instances != agent_states[name]["instances"]:
+                agent_states[name]["instances"] = instances
+                if instances == 0:
+                    agent_states[name]["status"] = "idle"
+                    agent_states[name]["last_line"] = ""
+                    agent_states[name]["activity"] = 0
                 changed = True
         if changed:
             await broadcast()
@@ -222,12 +308,11 @@ async def poll_instances():
 
 
 async def decay_status():
-    """Decay working→idle after 8s of inactivity (no fake 'thinking' state)."""
     while not shutdown_event.is_set():
         now = time.time()
         changed = False
-        for name, s in agent_states.items():
-            if s["status"] == "working" and now - s["activity"] > 8:
+        for name, state in agent_states.items():
+            if state["status"] == "working" and now - state["activity"] > 8:
                 agent_states[name]["status"] = "idle"
                 changed = True
         if changed:
@@ -257,14 +342,15 @@ async def lifespan(_app):
     tasks = [
         asyncio.create_task(tail_log(LOG_SOURCES["hermes"], "hermes")),
         asyncio.create_task(tail_log(LOG_SOURCES["codex"], "codex")),
+        asyncio.create_task(tail_log(LOG_SOURCES["ollama"], "ollama")),
         asyncio.create_task(poll_claude()),
         asyncio.create_task(poll_instances()),
         asyncio.create_task(decay_status()),
     ]
     yield
     shutdown_event.set()
-    for t in tasks:
-        t.cancel()
+    for task in tasks:
+        task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
 
 

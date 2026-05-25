@@ -1,10 +1,11 @@
-#!/bin/bash
-# Agent dashboard launcher — opens as a clean app-like window
-# Uses Firefox Developer Edition (primary browser) with minimal chrome
+#!/usr/bin/env bash
+# Agent dashboard launcher — opens as a clean widget/app window.
+# Works on macOS and Linux. Windows uses widget.ps1.
 
 PORT="${DASHBOARD_PORT:-7788}"
 URL="http://127.0.0.1:$PORT"
 DIR="$(cd "$(dirname "$0")" && pwd)"
+PROFILE_DIR="${TMPDIR:-/tmp}/agent-dashboard-widget-profile"
 
 # Ensure the server is running
 if ! lsof -ti:"$PORT" > /dev/null 2>&1; then
@@ -21,16 +22,38 @@ fi
 
 echo "Opening dashboard at $URL"
 
-# Try Firefox Developer Edition first (user's primary browser), then fallback
-if command -v firefox-developer-edition > /dev/null 2>&1; then
-  firefox-developer-edition --new-window "$URL" &
-elif command -v firefox > /dev/null 2>&1; then
-  firefox --new-window "$URL" &
-elif command -v chromium > /dev/null 2>&1; then
-  chromium --app="$URL" --window-size=1200,750 &
+# Prefer Chromium-family app mode for consistent widget chrome across OSes.
+APP_ARGS=(
+  "--app=$URL"
+  "--window-size=1200,750"
+  "--window-position=80,80"
+  "--disable-extensions"
+  "--no-first-run"
+  "--user-data-dir=$PROFILE_DIR"
+)
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if [[ -d "/Applications/Google Chrome.app" ]]; then
+    open -na "Google Chrome" --args "${APP_ARGS[@]}"
+  elif [[ -d "/Applications/Microsoft Edge.app" ]]; then
+    open -na "Microsoft Edge" --args "${APP_ARGS[@]}"
+  elif [[ -d "/Applications/Chromium.app" ]]; then
+    open -na "Chromium" --args "${APP_ARGS[@]}"
+  else
+    echo "No Chrome/Edge/Chromium app found. Open manually: $URL"
+    exit 1
+  fi
+elif command -v google-chrome > /dev/null 2>&1; then
+  google-chrome "${APP_ARGS[@]}" &
 elif command -v google-chrome-stable > /dev/null 2>&1; then
-  google-chrome-stable --app="$URL" --window-size=1200,750 &
+  google-chrome-stable "${APP_ARGS[@]}" &
+elif command -v chromium > /dev/null 2>&1; then
+  chromium "${APP_ARGS[@]}" &
+elif command -v chromium-browser > /dev/null 2>&1; then
+  chromium-browser "${APP_ARGS[@]}" &
+elif command -v microsoft-edge > /dev/null 2>&1; then
+  microsoft-edge "${APP_ARGS[@]}" &
 else
-  echo "No supported browser found. Open manually: $URL"
+  echo "No Chrome/Edge/Chromium-compatible browser found. Open manually: $URL"
   exit 1
 fi
