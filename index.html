@@ -5,17 +5,121 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent 3D Habitat</title>
 <style>
+  :root{
+    --bg-base:#0e0e0e;
+    --bg-1:#17191d;
+    --bg-2:#20242a;
+    --bg-3:#2d333b;
+    --bg-4:#3a4450;
+    --text-primary:#f8fafc;
+    --text-secondary:#b8c0cc;
+    --text-muted:#8a94a3;
+    --border-base:rgba(148,163,184,.22);
+    --border-strong:rgba(203,213,225,.28);
+    --brand:#a1aacb;
+    --fill-soft:rgba(255,255,255,.06);
+    --shadow-lg:0 18px 50px rgba(0,0,0,.34);
+  }
   *{margin:0;padding:0;box-sizing:border-box}
-  body{overflow:hidden;background:#050816;font-family:'Courier New',monospace}
+  html,body{height:100%}
+  body{
+    overflow:hidden;background:#050816;color:var(--text-primary);
+    font-family:"Avenir Next","Segoe UI",system-ui,sans-serif
+  }
   canvas{display:block}
+  button{font:inherit}
+  #command-bar{
+    position:fixed;top:18px;left:334px;right:18px;z-index:26;
+    display:flex;align-items:center;gap:14px;padding:12px 14px;
+    border:1px solid var(--border-base);border-radius:14px;
+    background:linear-gradient(180deg,rgba(14,14,14,.9),rgba(18,21,26,.78));
+    box-shadow:var(--shadow-lg);backdrop-filter:blur(18px)
+  }
+  .command-brand{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
+  .brand-rune{
+    width:34px;height:34px;border-radius:10px;flex:none;
+    background:
+      radial-gradient(circle at 30% 30%,rgba(161,170,203,.95),transparent 42%),
+      linear-gradient(135deg,#3d4150,#a1aacb 58%,#eff0f6);
+    box-shadow:0 0 18px rgba(161,170,203,.35)
+  }
+  .command-copy{min-width:0}
   #hud{
-    position:fixed;top:14px;left:50%;transform:translateX(-50%);
-    z-index:5;color:rgba(236,252,255,.72);font-size:.62rem;letter-spacing:.42em;
-    text-transform:uppercase;pointer-events:none;text-shadow:0 0 22px rgba(34,211,238,.75)
+    color:rgba(248,250,252,.9);font-size:.7rem;letter-spacing:.28em;
+    text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
   }
   #mode{
-    position:fixed;left:18px;bottom:16px;z-index:5;color:rgba(236,252,255,.52);
-    font-size:.68rem;letter-spacing:.18em;text-transform:uppercase;pointer-events:none
+    color:var(--text-muted);font-size:.69rem;letter-spacing:.06em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px
+  }
+  #top-metrics{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
+  .metric-chip{
+    min-width:92px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);
+    border-radius:10px;background:var(--fill-soft)
+  }
+  .metric-chip span{
+    display:block;font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--text-muted);margin-bottom:4px
+  }
+  .metric-chip strong{display:block;font-size:.95rem;font-weight:700;color:var(--text-primary)}
+  .metric-chip--wide{min-width:180px;max-width:240px}
+  .top-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+  .ui-btn{
+    border:1px solid rgba(161,170,203,.2);border-radius:10px;
+    background:rgba(61,65,80,.46);color:var(--text-primary);cursor:pointer;
+    padding:10px 12px;transition:background .18s ease,border-color .18s ease,transform .18s ease
+  }
+  .ui-btn:hover{background:rgba(82,90,119,.56);border-color:rgba(161,170,203,.38)}
+  .ui-btn.is-active{background:rgba(161,170,203,.2);border-color:rgba(161,170,203,.48)}
+  .ui-btn:active{transform:translateY(1px)}
+  #ops-sider{
+    position:fixed;top:18px;left:18px;bottom:18px;z-index:24;width:296px;
+    display:flex;flex-direction:column;gap:14px;padding:16px;
+    border:1px solid var(--border-base);border-radius:18px;
+    background:linear-gradient(180deg,rgba(14,14,14,.92),rgba(14,17,21,.78));
+    box-shadow:var(--shadow-lg);backdrop-filter:blur(18px);overflow:auto
+  }
+  .ops-header{padding-bottom:2px;border-bottom:1px solid rgba(255,255,255,.06)}
+  .ops-kicker{
+    font-size:.56rem;letter-spacing:.22em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px
+  }
+  .ops-title{font-size:1.18rem;font-weight:700;color:var(--text-primary)}
+  .ops-subtitle{margin-top:5px;color:var(--text-secondary);font-size:.78rem;line-height:1.35}
+  .ops-section{padding-top:2px}
+  .ops-section + .ops-section{border-top:1px solid rgba(255,255,255,.06);padding-top:14px}
+  .ops-section-head{
+    display:flex;align-items:center;justify-content:space-between;
+    font-size:.58rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--text-muted);margin-bottom:10px
+  }
+  .ops-stack{display:flex;flex-direction:column;gap:8px}
+  .ops-item{
+    width:100%;border:1px solid rgba(255,255,255,.06);border-radius:12px;
+    background:rgba(255,255,255,.03);color:inherit;cursor:pointer;
+    text-align:left;padding:10px 12px;transition:border-color .18s ease,background .18s ease,transform .18s ease
+  }
+  .ops-item:hover{background:rgba(255,255,255,.055);border-color:rgba(255,255,255,.12)}
+  .ops-item.is-active{border-color:rgba(161,170,203,.42);background:rgba(161,170,203,.14)}
+  .ops-item:disabled{cursor:default;opacity:.62}
+  .room-row-top,.agent-row-top{
+    display:flex;align-items:center;justify-content:space-between;gap:8px
+  }
+  .room-row-name,.agent-row-name{font-size:.86rem;font-weight:700;color:var(--text-primary)}
+  .room-row-meta,.agent-row-meta,.agent-row-line{
+    margin-top:6px;font-size:.72rem;line-height:1.35;color:var(--text-secondary)
+  }
+  .status-pill{
+    display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;
+    font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;border:1px solid currentColor
+  }
+  .status-pill.idle{color:#94a3b8}
+  .status-pill.working{color:#fbbf24}
+  .status-pill.offline{color:#ef4444}
+  .status-pill.thinking{color:#38bdf8}
+  .status-pill.online{color:#34d399}
+  .dot{
+    width:8px;height:8px;border-radius:999px;display:inline-block;flex:none;background:currentColor;
+    box-shadow:0 0 10px currentColor
   }
   .label{
     color:#ecfeff;font-size:11px;font-weight:700;letter-spacing:.08em;text-align:center;
@@ -27,10 +131,7 @@
     color:#fff;box-shadow:0 0 20px currentColor;text-shadow:0 0 8px rgba(255,255,255,.55);
     pointer-events:none
   }
-  #conn-status{
-    position:fixed;bottom:16px;right:18px;z-index:10;font-size:.55rem;
-    letter-spacing:.15em;pointer-events:none;transition:color .4s,opacity .4s
-  }
+  #conn-status{font-size:.62rem;letter-spacing:.15em;transition:color .4s,opacity .4s}
   #conn-status.online{color:rgba(52,211,153,.7)}
   #conn-status.offline{color:rgba(239,68,68,.5)}
   #conn-status.reconnecting{color:rgba(251,191,36,.5)}
@@ -51,8 +152,9 @@
   @keyframes typingDot{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-5px);opacity:1}}
   #agent-panel{
     position:fixed;top:0;right:0;width:min(360px,92vw);height:100vh;z-index:20;
-    background:rgba(10,15,18,.9);border-left:1px solid rgba(254,243,199,.24);
-    box-shadow:-18px 0 45px rgba(0,0,0,.34);backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(14,14,14,.94),rgba(18,21,26,.86));
+    border-left:1px solid var(--border-strong);
+    box-shadow:-18px 0 45px rgba(0,0,0,.34);backdrop-filter:blur(18px);
     color:#fef3c7;padding:18px;transform:translateX(0);transition:transform .22s ease;
     overflow:auto
   }
@@ -64,29 +166,71 @@
   #panel-title{font-size:1rem;letter-spacing:.12em;text-transform:uppercase;margin:18px 34px 6px 0;color:#fff}
   #panel-status{font-size:.68rem;letter-spacing:.18em;text-transform:uppercase;color:#a7f3d0;margin-bottom:16px}
   .panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
-  .panel-card{border:1px solid rgba(254,243,199,.18);border-radius:8px;padding:10px;background:rgba(41,28,16,.58)}
+  .panel-card{border:1px solid rgba(254,243,199,.12);border-radius:10px;padding:10px;background:rgba(41,28,16,.36)}
   .panel-k{font-size:.55rem;letter-spacing:.16em;text-transform:uppercase;color:rgba(254,243,199,.55);margin-bottom:5px}
   .panel-v{font-size:.9rem;color:#fff;word-break:break-word}
   #panel-history{display:flex;flex-direction:column;gap:8px}
   .history-line{font-size:.72rem;line-height:1.35;color:#f8fafc;background:rgba(15,23,42,.52);border-left:3px solid currentColor;padding:8px;border-radius:6px}
   /* ── Scoreboard ── */
-  #scoreboard{position:fixed;top:48px;left:14px;z-index:5;display:flex;flex-direction:column;gap:5px;pointer-events:none}
-  .sc-row{display:flex;align-items:center;gap:7px;font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(254,243,199,.8)}
+  #scoreboard{display:flex;flex-direction:column;gap:7px}
+  .sc-row{display:flex;align-items:center;gap:9px;font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(254,243,199,.8)}
   .sc-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-  .sc-name{flex:1;opacity:.68}
-  .sc-val{background:rgba(3,7,18,.75);border:1px solid;border-radius:4px;padding:1px 7px;font-size:.68rem;min-width:26px;text-align:center;transition:transform .15s}
+  .sc-rank{width:18px;color:var(--text-muted);font-size:.62rem}
+  .sc-name{flex:1;opacity:.84}
+  .sc-val{
+    background:rgba(3,7,18,.75);border:1px solid;border-radius:999px;padding:3px 8px;
+    font-size:.68rem;min-width:34px;text-align:center;transition:transform .15s
+  }
   .sc-val.bump{transform:scale(1.35)}
   /* ── Minimap ── */
-  #minimap-wrap{position:fixed;bottom:46px;right:18px;z-index:5;border:1px solid rgba(34,211,238,.28);border-radius:7px;background:rgba(5,8,22,.88);overflow:hidden}
+  #minimap-wrap{
+    position:fixed;bottom:46px;right:18px;z-index:5;border:1px solid rgba(34,211,238,.28);
+    border-radius:12px;background:rgba(5,8,22,.88);overflow:hidden;
+    box-shadow:0 14px 38px rgba(0,0,0,.28);backdrop-filter:blur(12px)
+  }
   #minimap{display:block}
   #minimap-label{text-align:center;font-size:.42rem;letter-spacing:.2em;text-transform:uppercase;color:rgba(34,211,238,.45);padding:2px 0}
   /* ── Timeline ── */
-  #timeline{position:fixed;bottom:0;left:0;right:0;height:26px;z-index:4;overflow:hidden;pointer-events:none;background:linear-gradient(to top,rgba(5,8,22,.75),transparent);display:flex;align-items:center}
+  #timeline{
+    position:fixed;bottom:0;left:0;right:0;height:28px;z-index:4;overflow:hidden;pointer-events:none;
+    background:linear-gradient(to top,rgba(5,8,22,.85),transparent);display:flex;align-items:center
+  }
   #tl-track{display:flex;gap:20px;white-space:nowrap;padding:0 14px;will-change:transform}
   .tl-item{font-size:.51rem;letter-spacing:.07em;text-transform:uppercase;opacity:.65;flex-shrink:0}
   .tl-ts{color:rgba(254,243,199,.38);margin-right:5px}
   /* ── Weather ── */
-  #weather-badge{position:fixed;top:48px;right:14px;z-index:5;font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(254,243,199,.72);pointer-events:none;text-align:right;line-height:1.7}
+  #weather-badge{
+    font-size:.72rem;line-height:1.45;color:var(--text-primary);
+    white-space:normal;word-break:break-word
+  }
+  .feed-list{display:flex;flex-direction:column;gap:8px}
+  .feed-row{
+    border-left:3px solid currentColor;padding:8px 10px;border-radius:8px;
+    background:rgba(255,255,255,.035)
+  }
+  .feed-row time{
+    display:block;margin-bottom:4px;font-size:.58rem;letter-spacing:.12em;
+    text-transform:uppercase;color:rgba(248,250,252,.42)
+  }
+  .feed-row span{display:block;font-size:.74rem;line-height:1.4;color:var(--text-primary)}
+  @media (max-width: 1120px){
+    #command-bar{left:300px}
+    #ops-sider{width:262px}
+  }
+  @media (max-width: 920px){
+    #command-bar{
+      left:18px;right:18px;top:auto;bottom:18px;flex-direction:column;align-items:stretch
+    }
+    .top-actions{margin-left:0}
+    #ops-sider{
+      width:calc(100vw - 36px);bottom:auto;max-height:40vh
+    }
+    #agent-panel{
+      top:auto;bottom:18px;right:18px;height:min(56vh,560px);width:calc(100vw - 36px);
+      border-left:1px solid var(--border-strong);border-radius:16px
+    }
+    #minimap-wrap{bottom:172px}
+  }
 </style>
 <script type="importmap">
 {
@@ -98,14 +242,78 @@
 </script>
 </head>
 <body>
-<div id="hud">Agent Habitat // Web3D</div>
-<div id="mode">Arrastra agentes · doble click en zona trabajo · rueda para zoom</div>
-<div id="conn-status" class="online">● ONLINE</div>
+<div id="command-bar">
+  <div class="command-brand">
+    <div class="brand-rune" aria-hidden="true"></div>
+    <div class="command-copy">
+      <div id="hud">Agent Habitat // Aion Fusion</div>
+      <div id="mode">Arrastra agentes · doble click en zona trabajo · rueda para zoom</div>
+    </div>
+  </div>
+  <div id="top-metrics">
+    <div class="metric-chip">
+      <span>Sesiones</span>
+      <strong id="live-sessions">0</strong>
+    </div>
+    <div class="metric-chip">
+      <span>Activos</span>
+      <strong id="live-working">0</strong>
+    </div>
+    <div class="metric-chip metric-chip--wide">
+      <span>Foco</span>
+      <strong id="focus-label">Vista general</strong>
+    </div>
+  </div>
+  <div class="top-actions">
+    <button id="overview-btn" class="ui-btn is-active" type="button">Overview</button>
+    <button id="worktop-btn" class="ui-btn" type="button">Workzone</button>
+  </div>
+</div>
+<aside id="ops-sider">
+  <div class="ops-header">
+    <div class="ops-kicker">Control surface</div>
+    <div class="ops-title">Aion Dock</div>
+    <div class="ops-subtitle">Fusion de la escena 3D actual con una capa operativa inspirada en AionUi.</div>
+  </div>
+  <section class="ops-section">
+    <div class="ops-section-head">
+      <span>Cluster</span>
+      <span id="conn-status" class="online">● ONLINE</span>
+    </div>
+    <div id="weather-badge">—</div>
+  </section>
+  <section class="ops-section">
+    <div class="ops-section-head">
+      <span>Ranking</span>
+      <span id="sidebar-total-tasks">0 tareas</span>
+    </div>
+    <div id="scoreboard"></div>
+  </section>
+  <section class="ops-section">
+    <div class="ops-section-head">
+      <span>Salas</span>
+      <span id="room-total">0</span>
+    </div>
+    <div id="room-list" class="ops-stack"></div>
+  </section>
+  <section class="ops-section">
+    <div class="ops-section-head">
+      <span>Agentes</span>
+      <span id="agent-total">0</span>
+    </div>
+    <div id="agent-list" class="ops-stack"></div>
+  </section>
+  <section class="ops-section">
+    <div class="ops-section-head">
+      <span>Actividad</span>
+      <span>Live</span>
+    </div>
+    <div id="feed-list" class="feed-list"></div>
+  </section>
+</aside>
 <div id="offline-overlay"><div class="sym">⚠</div><div class="msg">CONNECTION LOST — RECONNECTING…</div></div>
-<div id="scoreboard"></div>
 <div id="minimap-wrap"><canvas id="minimap" width="172" height="118"></canvas><div id="minimap-label">mapa</div></div>
 <div id="timeline"><div id="tl-track"></div></div>
-<div id="weather-badge">—</div>
 <aside id="agent-panel" class="hidden">
   <button id="panel-close" type="button" aria-label="Cerrar">×</button>
   <div id="panel-title">Agente</div>
@@ -242,6 +450,8 @@ Object.keys(CONFIGS).forEach(id=>taskCounts[id]=0);
 const scoreState={};
 Object.keys(CONFIGS).forEach(id=>scoreState[id]={lastLine:'',lastStatus:'idle'});
 let weatherParticles=null,audioCtx=null,_animFrame=0;
+const activityFeed=[];
+let currentFocusKey='overview';
 const DAY_FRAMES=[
   [0, 0x060b0e,0.38,0.10,0x3a5a8c],[5, 0x0d0508,0.52,0.20,0x7a3a1a],
   [6, 0x2d1208,0.90,0.80,0xff7040],[8, 0x6090c0,1.80,2.50,0xfff0d0],
@@ -254,13 +464,24 @@ const panelTitle=document.getElementById('panel-title');
 const panelStatus=document.getElementById('panel-status');
 const panelMetrics=document.getElementById('panel-metrics');
 const panelHistory=document.getElementById('panel-history');
+const roomListEl=document.getElementById('room-list');
+const agentListEl=document.getElementById('agent-list');
+const feedListEl=document.getElementById('feed-list');
+const liveSessionsEl=document.getElementById('live-sessions');
+const liveWorkingEl=document.getElementById('live-working');
+const focusLabelEl=document.getElementById('focus-label');
+const overviewBtn=document.getElementById('overview-btn');
+const worktopBtn=document.getElementById('worktop-btn');
 document.getElementById('panel-close').addEventListener('click',()=>selectAgent(null));
+overviewBtn?.addEventListener('click',()=>setOverview());
+worktopBtn?.addEventListener('click',()=>setWorkTopView());
 
 initLights();
 buildHouse();
 buildAppliances();
 buildWorkZone();
 initScoreboard();
+renderSidebar();
 fetchWeather();
 camera.position.copy(camPos);
 camera.lookAt(camLook);
@@ -1093,11 +1314,15 @@ function overviewPos(){
 function setOverview(){
   goTo(overviewPos(),new THREE.Vector3(0,0,0));
   document.getElementById('mode').textContent='Arrastra agentes · doble click en zona trabajo · rueda para zoom';
+  setFocusState('overview','Vista general');
+  renderSidebar();
 }
 
 function setWorkTopView(){
   goTo(new THREE.Vector3(WORK_ZONE.x,8.4,WORK_ZONE.z+.02),new THREE.Vector3(WORK_ZONE.x,0,WORK_ZONE.z));
   document.getElementById('mode').textContent='Vista cenital · ESC para volver';
+  setFocusState('workzone','Zona trabajo');
+  renderSidebar();
 }
 
 // ── Pointer / keyboard / wheel ────────────────────────────────────────
@@ -1210,9 +1435,10 @@ function nearestRoom(point){
 
 function selectAgent(agent){
   selectedAgent=agent;
-  if(!agent){panelEl.classList.add('hidden');return;}
+  if(!agent){panelEl.classList.add('hidden');renderSidebar();return;}
   panelEl.classList.remove('hidden');
   renderAgentPanel();
+  renderSidebar();
 }
 
 function renderAgentPanel(){
@@ -1236,6 +1462,159 @@ function escapeHtml(text){
   return text.replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
 
+function statusTone(status,instances=0){
+  if(instances===0) return 'offline';
+  if(status==='working') return 'working';
+  if(status==='thinking') return 'thinking';
+  return 'idle';
+}
+
+function statusLabel(status,instances=0){
+  if(instances===0) return 'offline';
+  if(status==='working') return 'working';
+  if(status==='thinking') return 'thinking';
+  return status||'idle';
+}
+
+function setFocusState(key,label){
+  currentFocusKey=key;
+  if(focusLabelEl) focusLabelEl.textContent=label;
+  overviewBtn?.classList.toggle('is-active',key==='overview');
+  worktopBtn?.classList.toggle('is-active',key==='workzone');
+}
+
+function focusRoom(roomId){
+  if(roomId==='work'){
+    setWorkTopView();
+    return;
+  }
+  const room=roomById[roomId];
+  if(!room) return;
+  const pos=new THREE.Vector3(
+    room.x+(room.x<0?2.35:-2.35),
+    3.9,
+    room.z+(room.z<0?2.15:2.35)
+  );
+  goTo(pos,new THREE.Vector3(room.x,0.25,room.z));
+  document.getElementById('mode').textContent=`Foco en ${room.name} · ESC para volver`;
+  setFocusState(`room:${roomId}`,room.name);
+  renderSidebar();
+}
+
+function focusAgent(agent){
+  if(!agent) return;
+  const pos=new THREE.Vector3(
+    agent.pos.x+(agent.pos.x<0?1.35:-1.35),
+    2.6,
+    agent.pos.z+1.7
+  );
+  goTo(pos,agent.pos.clone().add(new THREE.Vector3(0,.3,0)));
+  document.getElementById('mode').textContent=`Seguimiento de ${agent.name} · ESC para volver`;
+  setFocusState(`agent:${agent.uid}`,agent.name);
+  renderSidebar();
+}
+
+function renderSidebar(){
+  const liveAgents=[...agents.values()];
+  const totalSessions=liveAgents.length;
+  const totalWorking=liveAgents.filter(agent=>agent.status==='working').length;
+  const totalTasks=Object.values(taskCounts).reduce((sum,count)=>sum+count,0);
+  if(liveSessionsEl) liveSessionsEl.textContent=String(totalSessions);
+  if(liveWorkingEl) liveWorkingEl.textContent=String(totalWorking);
+  const totalEl=document.getElementById('sidebar-total-tasks');
+  if(totalEl) totalEl.textContent=`${totalTasks} tareas`;
+  const roomTotalEl=document.getElementById('room-total');
+  if(roomTotalEl) roomTotalEl.textContent=String(rooms.length+1);
+  const agentTotalEl=document.getElementById('agent-total');
+  if(agentTotalEl) agentTotalEl.textContent=String(totalSessions);
+
+  if(roomListEl){
+    roomListEl.innerHTML='';
+    const roomEntries=[
+      {
+        id:'work',
+        name:'Zona trabajo',
+        accent:'#f97316',
+        occupancy:liveAgents.filter(agent=>agent.room==='work').length,
+        working:liveAgents.filter(agent=>agent.room==='work'&&agent.status==='working').length
+      },
+      ...rooms.map(room=>({
+        id:room.id,
+        name:room.name,
+        accent:`#${room.accent.toString(16).padStart(6,'0')}`,
+        occupancy:liveAgents.filter(agent=>agent.room===room.id).length,
+        working:liveAgents.filter(agent=>agent.room===room.id&&agent.status==='working').length
+      }))
+    ];
+    roomEntries.forEach(entry=>{
+      const button=document.createElement('button');
+      button.type='button';
+      button.className='ops-item';
+      if(currentFocusKey===`room:${entry.id}`||(entry.id==='work'&&currentFocusKey==='workzone')) button.classList.add('is-active');
+      button.innerHTML=`
+        <div class="room-row-top">
+          <span class="room-row-name" style="color:${entry.accent}">${escapeHtml(entry.name)}</span>
+          <span class="status-pill ${entry.working>0?'working':entry.occupancy>0?'online':'offline'}">
+            <i class="dot"></i>${entry.working>0?`${entry.working} active`:entry.occupancy>0?`${entry.occupancy} live`:'offline'}
+          </span>
+        </div>
+        <div class="room-row-meta">${entry.occupancy} sesiones visibles</div>
+      `;
+      button.addEventListener('click',()=>focusRoom(entry.id));
+      roomListEl.appendChild(button);
+    });
+  }
+
+  if(agentListEl){
+    agentListEl.innerHTML='';
+    Object.entries(CONFIGS)
+      .map(([id,cfg])=>{
+        const cluster=liveAgents.filter(agent=>agent.agentId===id);
+        const primary=cluster[0]||null;
+        const working=cluster.filter(agent=>agent.status==='working').length;
+        return {id,cfg,cluster,primary,working,count:cluster.length,tasks:taskCounts[id]||0};
+      })
+      .sort((a,b)=>b.working-a.working||b.count-a.count||b.tasks-a.tasks||a.cfg.name.localeCompare(b.cfg.name))
+      .forEach(entry=>{
+        const status=statusLabel(entry.primary?.status||'idle',entry.count);
+        const tone=statusTone(entry.primary?.status||'idle',entry.count);
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='ops-item';
+        if(entry.primary&&currentFocusKey===`agent:${entry.primary.uid}`) button.classList.add('is-active');
+        button.disabled=!entry.primary;
+        button.innerHTML=`
+          <div class="agent-row-top">
+            <span class="agent-row-name" style="color:#${entry.cfg.color.toString(16).padStart(6,'0')}">${escapeHtml(entry.cfg.name)}</span>
+            <span class="status-pill ${tone}"><i class="dot"></i>${escapeHtml(status)}</span>
+          </div>
+          <div class="agent-row-meta">${entry.count} instancias · ${entry.tasks} eventos</div>
+          <div class="agent-row-line">${escapeHtml((entry.primary?.lastLine||'Sin actividad reciente').slice(0,84))}</div>
+        `;
+        if(entry.primary){
+          button.addEventListener('click',()=>{
+            selectAgent(entry.primary);
+            focusAgent(entry.primary);
+            renderSidebar();
+          });
+        }
+        agentListEl.appendChild(button);
+      });
+  }
+
+  if(feedListEl){
+    feedListEl.innerHTML='';
+    activityFeed.slice(0,6).forEach(item=>{
+      const row=document.createElement('div');
+      row.className='feed-row';
+      row.style.color=`#${item.color}`;
+      row.innerHTML=`<time>${escapeHtml(item.ts)}</time><span>${escapeHtml(item.name)} · ${escapeHtml(item.text)}</span>`;
+      feedListEl.appendChild(row);
+    });
+    if(!activityFeed.length) feedListEl.innerHTML='<div class="feed-row" style="color:#94a3b8"><time>Sin eventos</time><span>Esperando actividad de agentes.</span></div>';
+  }
+}
+
 // ── Scoreboard ─────────────────────────────────────────────────────────
 function renderScoreboard(){
   const el=document.getElementById('scoreboard');if(!el) return;
@@ -1245,9 +1624,8 @@ function renderScoreboard(){
   sorted.forEach(([id,cfg],rank)=>{
     const c='#'+cfg.color.toString(16).padStart(6,'0');
     const count=taskCounts[id]||0;
-    const medal=rank===0&&count>0?'🥇':rank===1&&count>0?'🥈':rank===2&&count>0?'🥉':'';
     const row=document.createElement('div');row.className='sc-row';
-    row.innerHTML=`<span class="sc-dot" style="background:${c};box-shadow:0 0 5px ${c}"></span><span class="sc-name" style="color:${c}">${medal}${cfg.name}</span><span class="sc-val" id="sv-${id}" style="color:${c};border-color:${c}">${count}</span>`;
+    row.innerHTML=`<span class="sc-rank">#${rank+1}</span><span class="sc-dot" style="background:${c};box-shadow:0 0 5px ${c}"></span><span class="sc-name" style="color:${c}">${cfg.name}</span><span class="sc-val" id="sv-${id}" style="color:${c};border-color:${c}">${count}</span>`;
     el.appendChild(row);
   });
 }
@@ -1297,6 +1675,9 @@ function addTimelineEvent(agentId,text){
   item.innerHTML=`<span class="tl-ts">${ts}</span>${escapeHtml(cfg.name)} — ${escapeHtml(text.slice(0,55))}`;
   tlTrack.appendChild(item);
   while(tlTrack.childElementCount>50) tlTrack.removeChild(tlTrack.firstChild);
+  activityFeed.unshift({agentId,name:cfg.name,text:text.slice(0,72),ts,color:cfg.color.toString(16).padStart(6,'0')});
+  activityFeed.splice(8);
+  renderSidebar();
   requestAnimationFrame(()=>{
     const tw=tlTrack.scrollWidth,cw=innerWidth;
     if(tw>cw) tlTrack.style.transform=`translateX(${-(tw-cw+14)}px)`;
@@ -1426,7 +1807,7 @@ async function fetchWeather(){
     });
     const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current=weather_code,temperature_2m&forecast_days=1&timezone=auto`).then(r=>r.json());
     const code=r.current.weather_code,temp=Math.round(r.current.temperature_2m);
-    wb.textContent=`${WEATHER_MAP[code]||'—'}\n${temp}°C`;
+    wb.textContent=`${WEATHER_MAP[code]||'—'} · ${temp}°C`;
     applyWeatherParticles(code);
   }catch(e){wb.textContent='🌐 sin datos';}
 }
@@ -1441,6 +1822,7 @@ function animate(){
   updateWeatherParticles(dt);
   if(_animFrame%3===0) updateDayNight();   // cada 3 frames ~20×/s
   if(_animFrame%2===0) drawMinimap();      // cada 2 frames ~30×/s
+  if(_animFrame%12===0) renderSidebar();
   tickRoomAmbience(selectedAgent?.room||null);
   camPos.lerp(camPosTarget,Math.min(1,dt*4.2));
   camLook.lerp(camLookTarget,Math.min(1,dt*4.2));
